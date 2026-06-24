@@ -1,0 +1,141 @@
+\chapter{Introducere}\label{ch:intro}
+\pagestyle{fancy}
+
+\section{Contextul lucrării}
+\label{sec:intro-context}
+
+Protezele robotice reprezintă unul dintre cele mai active domenii de cercetare la
+intersecția dintre ingineria calculatoarelor, biomedicală și robotică. Capacitatea de
+a reproduce mișcările naturale ale mâinii umane are implicații profunde atât în
+domeniul medical, restabilirea funcționalității membrelor superioare pentru
+persoanele cu dizabilități, cât și în cel industrial, unde mâinile robotice sunt
+utilizate în manipularea obiectelor, asamblare de precizie și interacțiune
+om-robot.
+
+Un aspect esențial al acestor sisteme este \textit{controlul în timp real}. Mâna
+umană posedă 27 DOF (\textit{Degrees of Freedom}, numărul de mișcări independente
+posibile) și poate efectua mișcări cu o latență de ordinul milisecundelor. Pentru
+a reproduce un comportament natural, un sistem robotic trebuie să proceseze datele
+senzoriale, să determine pozițiile dorite ale articulațiilor și să genereze
+semnalele de control în cadrul unor constrângeri temporale stricte. Orice latență
+sau fluctuație în semnalele de comandă se traduce în mișcări sacadate, nepotrivite
+cu gestul intenționat.
+
+În paralel, domeniul recunoașterii gesturilor a cunoscut progrese semnificative
+datorită dezvoltării rețelelor neuronale și a bibliotecilor de viziune
+computerizată. Google MediaPipe \cite{mediapipe2019} oferă un model de estimare a
+pozițiilor articulațiilor mâinii în timp real, capabil să funcționeze pe
+hardware convențional. Acest lucru deschide posibilitatea construirii unor
+sisteme de teleoperare accesibile, în care un operator uman controlează o mână
+robotică prin simpla filmare a propriei mâini cu o cameră web.
+
+Provocarea principală constă în integrarea celor două domenii: pe de o parte,
+procesarea video și extragerea coordonatelor articulațiilor (realizată pe un
+calculator gazdă) și, pe de altă parte, controlul determinist al servomotoarelor
+(realizat pe o platformă hardware dedicată). Această lucrare abordează tocmai
+această integrare, propunând o soluție bazată pe FPGA (\textit{Field-Programmable
+Gate Array}, matrice de porți programabile) pentru componenta de control.
+
+\section{Motivația personală}
+\label{sec:intro-motivatie-personala}
+
+Pasiunea pentru construirea de lucruri concrete și plăcerea de a vedea un
+proiect prinzând viață m-au îndreptat către o temă de licență cu un puternic
+caracter aplicativ. Mi-am dorit să realizez ceva util
+și, în același timp, spectaculos, iar domeniul teleoperării m-a fascinat
+dintotdeauna prin ideea de a controla de la distanță un sistem mecanic care
+reproduce gesturile umane. Din această dorință s-a născut tema lucrării de
+față: un braț robotic care imită în timp real mișcările mâinii umane,
+preluate cu ajutorul unei camere web. Componenta de viziune computerizată
+este dezvoltată de colegul meu Lion Moroz, în timp ce contribuția mea
+acoperă preluarea datelor prin UART (\textit{Universal Asynchronous
+Receiver-Transmitter}) și prelucrarea lor pe placa Basys3, unde
+sunt implementate filtrul Kalman și celelalte module de control descrise în
+această lucrare. Pentru realizarea sistemului am utilizat, de asemenea, o
+gamă largă de componente Analog Devices, după cum se va observa pe parcurs.
+
+Neavând experiență în modelarea 3D, am pornit de la modele open-source
+existente. Primul care mi-a atras atenția a fost brațul prezentat de Horizon
+într-un material video \cite{horizon_hand}. I-am scris autorului pentru a-i
+solicita fișierele, iar acesta a răspuns și le-a publicat pe platforma
+Thingiverse. Deși ulterior am ales un alt model, mai potrivit cerințelor
+proiectului, această interacțiune cu comunitatea open-source mi-a oferit un
+impuls și o motivație suplimentară pentru a finaliza un proiect de calitate.
+
+\section{Motivația alegerii platformei FPGA}
+\label{sec:intro-fpga}
+
+Alegerea unei platforme FPGA pentru
+controlul servomotoarelor, în locul unui microcontroler tradițional, este
+motivată de mai multe avantaje fundamentale.
+
+\textbf{Determinism temporal.} Un microcontroler execută instrucțiuni secvențial,
+iar întreruperile, schimbările de context și accesul la memorie introduc
+variabilitate în timpul de execuție (\textit{jitter}). Într-un FPGA, logica de
+control este implementată direct în hardware, iar semnalele PWM (\textit{Pulse
+Width Modulation}, modulație în lățimea pulsului) sunt generate de
+circuite dedicate care funcționează sincron cu ceasul de sistem. Rezultatul este
+un jitter de ordinul nanosecundelor, comparativ cu microsecundele sau chiar
+zecile de microsecunde ale unui microcontroler. Pentru servomotoare de tip
+MG996R, care interpretează lățimea pulsului PWM ca poziție angulară, această
+precizie temporală se traduce direct în stabilitatea poziționării.
+
+\textbf{Paralelism real.} Un FPGA permite generarea simultană a tuturor celor
+8 canale PWM, fără multiplexare în timp. Fiecare canal PWM dispune de propriul
+comparator hardware, iar actualizarea poziției unui servo nu afectează în
+niciun fel celelalte canale. În plus, modulul de filtrare Kalman, interfața
+UART și controlerul SPI (\textit{Serial Peripheral Interface}) pentru ADC-ul
+(\textit{Analog-to-Digital Converter}, convertor analog-digital) AD7124-8
+funcționează toate în paralel,
+fără a concura pentru același procesor.
+
+\textbf{Filtrare Kalman în timp real.} Filtrul Kalman este un estimator optim
+pentru sisteme liniare cu zgomot gaussian. În contextul acestei lucrări, acesta
+modelează fiecare servo ca un sistem cu două stări (poziție și viteză)
+și estimează traiectoria reală pe baza măsurătorilor zgomotoase primite de la
+MediaPipe. Implementarea în FPGA, utilizând aritmetică în virgulă fixă Q16.16,
+permite execuția completă a algoritmului într-un număr fix de cicluri de ceas,
+garantând că filtrarea se finalizează înainte de următorul ciclu de servo
+(20~ms).
+
+\textbf{Scalabilitate.} Arhitectura modulară a proiectului permite adăugarea
+de noi canale PWM sau senzori fără modificarea logicii existente, în limita
+resurselor FPGA disponibile.
+
+\section{Prezentarea generală a sistemului}
+\label{sec:intro-overview}
+
+Sistemul propus în această lucrare realizează controlul unei mâini robotice
+printate 3D, cu 8 servomotoare MG996R, pe baza gesturilor capturate în timp
+real de la un operator uman. Arhitectura de ansamblu este structurată pe
+două niveluri:
+
+\begin{enumerate}
+	\item \textbf{Nivelul de achiziție}: un calculator gazdă rulează
+	      biblioteca MediaPipe pentru detecția articulațiilor mâinii din fluxul
+	      video. Unghiurile calculate pentru fiecare articulație sunt transmise
+	      prin UART la 115200~baud, sub forma unor cadre de 10~octeți.
+	\item \textbf{Nivelul de control}: placa FPGA Basys3 (Xilinx Artix-7
+	      XC7A35T, 100~MHz) recepționează cadrele UART, aplică un filtru Kalman
+	      cu 2~stări pentru fiecare canal, generează 8~semnale PWM independente
+	      și transmite aceste semnale prin izolatori galvanici ADUM1400 către
+	      servomotoare. Un ADC AD7124-8 pe 24~de biți, interfațat prin SPI
+	      printr-un izolator MAX14850, permite citirea poziției reale a
+	      servomotoarelor pentru verificare.
+\end{enumerate}
+
+Lanțul complet de semnal este:
+\begin{center}
+\mbox{\textit{Cameră} $\rightarrow$ \textit{MediaPipe} $\rightarrow$ \textit{UART} $\rightarrow$ \textit{FPGA} $\rightarrow$ \textit{ADUM1400} $\rightarrow$ \textit{Servo}}
+\end{center}
+
+Cele 8~servomotoare sunt mapate pe articulațiile mâinii robotice după cum
+urmează: degetul mic, degetul inelar, degetul mijlociu, degetul arătător,
+mișcarea palmară a degetului mare, tensiunea degetului mare, rotația
+încheieturii și extensia cotului. Această configurație permite reproducerea
+majorității gesturilor naturale ale mâinii.
+
+Un mod demonstrativ (\textit{demo mode}), activabil prin intermediul
+comutatoarelor de pe placa Basys3, permite funcționarea autonomă a
+sistemului prin parcurgerea unei secvențe predefinite de mișcări stocate
+într-un modul ROM, fără a necesita conexiunea cu calculatorul gazdă.

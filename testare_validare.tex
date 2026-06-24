@@ -1,0 +1,497 @@
+\chapter{Testare și validare}\label{ch:testare}
+\pagestyle{fancy}
+
+Acest capitol descrie metodologia de testare aplicată sistemului de control
+FPGA, acoperind atât testarea individuală a fiecărui modul cât și testarea
+integrată a lanțului complet de semnal. Se prezintă rezultatele măsurătorilor,
+verificarea funcționalității și analiza utilizării resurselor FPGA.
+
+%==========================================================================
+\section{Metodologia de testare}
+\label{sec:metodologie}
+
+Strategia de testare urmează o abordare de tip \textit{bottom-up}: fiecare
+modul VHDL este verificat individual înainte de a fi integrat în sistemul
+complet. Această metodologie permite izolarea defectelor la nivelul modulului
+unde au origine, simplificând depanarea.
+
+Testarea s-a desfășurat pe două niveluri:
+
+\begin{enumerate}
+	\item \textbf{Testare per modul:} Fiecare modul este instanțiat izolat
+	      în modulul de nivel superior, cu semnale de intrare controlate
+	      (hardcodate sau furnizate de un generator de stimuli) și ieșiri
+	      observate pe LED-uri, osciloscp sau terminal serial.
+
+	\item \textbf{Testare de integrare:} Modulele sunt conectate conform
+	      arhitecturii finale, iar sistemul complet este exercitat prin
+	      scenarii end-to-end: cadre UART transmise de la PC-ul gazdă,
+	      verificarea unghiurilor pe osciloscop la ieșirile PWM și
+	      monitorizarea indicatoarelor LED.
+\end{enumerate}
+
+Instrumentele utilizate:
+\begin{itemize}
+	\item Osciloscop digital pentru măsurarea semnalelor PWM și SPI
+	\item Terminal serial (PuTTY / Tera Term) la 115\,200~baud pentru
+	      comunicarea UART
+	\item LED-urile plăcii Basys3 pentru monitorizarea stărilor interne
+	\item Vivado Hardware Manager pentru programarea și reprogramarea
+	      rapidă a bitstreamului
+\end{itemize}
+
+%==========================================================================
+\section{Testarea modulului PWM}
+\label{sec:test-pwm}
+
+Modulul \texttt{pwm\_gen} a fost primul testat deoarece generarea corectă a
+semnalelor PWM este condiția fundamentală pentru controlul servomotoarelor.
+
+\subsection{Metodă}
+
+S-a instanțiat o singură instanță a modulului \texttt{pwm\_gen} cu unghiul
+hardcodat la diferite valori de test. Ieșirea PWM a fost conectată la un
+pin Pmod și măsurată cu osciloscopul.
+
+\subsection{Cazuri de test}
+
+\begin{table}[H]
+\centering
+\caption{Rezultatele testării modulului PWM}
+\label{tab:pwm-test}
+\begin{tabular}{@{}cccc@{}}
+\toprule
+\textbf{Unghi intrare} & \textbf{Lățime puls așteptată} & \textbf{Lățime puls măsurată} & \textbf{Eroare} \\
+\midrule
+0° & 1,000\,ms & 1,000\,ms & $<$10\,ns \\
+90° & 1,500\,ms & 1,500\,ms & $<$10\,ns \\
+180° & 2,001\,ms & 2,001\,ms & $<$10\,ns \\
+45° & 1,250\,ms & 1,249\,ms & $<$10\,$\mu$s \\
+135° & 1,750\,ms & 1,751\,ms & $<$10\,$\mu$s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Analiza rezultatelor}
+
+Verificarea la 90° este deosebit de relevantă deoarece corespunde poziției
+mediane a servomotorului:
+
+\begin{equation}
+\text{threshold}_{90°} = 100\,000 + 90 \times 556 = 100\,000 + 50\,040 = 150\,040
+\end{equation}
+
+La 100\,MHz, 150\,040~de cicluri corespund unei lățimi de puls de
+$150\,040 \times 10\,\text{ns} = 1\,500\,400\,\text{ns} \approx 1,500\,\text{ms}$,
+ceea ce este corect.
+
+Eroarea minimă observată (sub un ciclu de ceas de 10\,ns) confirmă precizia
+generatorului PWM hardware. Comparativ, o implementare software pe
+microcontroler ar prezenta jitter de ordinul microsecundelor din cauza
+întreruperilor și a schimbărilor de context.
+
+Perioada semnalului PWM a fost măsurată la exact 20,000\,ms ($\pm$10\,ns),
+confirmând funcționarea corectă a numărătorului pe 21~de biți.
+
+%==========================================================================
+\section{Testarea comunicației UART}
+\label{sec:test-uart}
+
+\subsection{Testul de loopback}
+
+Pentru verificarea isolată a modulelor \texttt{uart\_rx} și \texttt{uart\_tx},
+s-a implementat o configurație de loopback: fiecare octet recepționat este
+retransmis imediat prin \texttt{uart\_tx}. Conectarea se realizează prin
+cablul USB integrat pe placa Basys3, care include un convertor
+USB-la-UART.
+
+\subsection{Procedura de test}
+
+\begin{enumerate}
+	\item Se deschide PuTTY (sau Tera Term) cu parametrii: portul COM
+	      corespunzător plăcii Basys3, 115\,200~baud, 8N1 (8~biți de date,
+	      fără paritate, 1~bit de stop).
+	\item Se activează opțiunea \textit{local echo} în terminalul serial
+	      pentru a vizualiza caracterele transmise alături de cele
+	      recepționate.
+	\item Se tastează caractere individuale și secvențe de text. Fiecare
+	      caracter transmis trebuie să apară de două ori pe ecran: o dată
+	      de la echo-ul local și o dată de la loopback-ul FPGA.
+	\item Se transmit secvențe rapide de caractere pentru a verifica
+	      funcționarea la debit maxim.
+\end{enumerate}
+
+\subsection{Rezultate}
+
+Toate caracterele au fost recepționate și retransmise corect, inclusiv
+la debit maxim continuu. Nu s-au observat pierderi de caractere sau
+erori de recepție. Testul confirmă:
+
+\begin{itemize}
+	\item Funcționarea corectă a sincronizatorului cu dublu flip-flop
+	      (nicio eroare de metastabilitate detectată)
+	\item Eșantionarea la mijlocul bitului funcționează corespunzător
+	\item Calculul parametrilor de baud (CLKS\_PER\_BIT = 867) este corect
+	\item Transmisia și recepția LSB-first sunt implementate conform
+	      standardului
+\end{itemize}
+
+%==========================================================================
+\section{Testarea protocolului de cadre}
+\label{sec:test-frame}
+
+\subsection{Verificarea recepției cadrelor}
+
+Testarea modulului \texttt{frame\_rx} s-a realizat prin transmiterea de
+cadre de 10~octeți de la PC prin intermediul unui script Python care
+construiește cadre cu unghiuri cunoscute și calculează checksum-ul XOR
+corect.
+
+\subsubsection{Cazul 1: Cadru valid}
+
+S-a transmis un cadru cu toți servo-urile la 90° (0x5A):
+\begin{center}
+\texttt{FF 5A 5A 5A 5A 5A 5A 5A 5A [checksum]}
+\end{center}
+
+Checksum = $\texttt{FF} \oplus \texttt{5A} \oplus \texttt{5A} \oplus
+\texttt{5A} \oplus \texttt{5A} \oplus \texttt{5A} \oplus \texttt{5A} \oplus
+\texttt{5A} \oplus \texttt{5A} = \texttt{A5}$.
+
+Cadrul complet: \texttt{FF 5A 5A 5A 5A 5A 5A 5A 5A A5}.
+
+Rezultat observat:
+\begin{itemize}
+	\item LED 2 (frame\_valid) pulsează scurt la recepția cadrului
+	\item LED 3 (checksum\_err) rămâne stins
+	\item LED-urile 8--15 afișează valoarea 0x5A (90) în binar
+	\item Servomotorul conectat se poziționează la 90°
+\end{itemize}
+
+\subsubsection{Cazul 2: Cadru cu checksum eronat}
+
+S-a transmis același cadru, dar cu octetul de checksum modificat intenționat
+(un bit inversat):
+
+\begin{center}
+\texttt{FF 5A 5A 5A 5A 5A 5A 5A 5A A4} (checksum corect ar fi A5)
+\end{center}
+
+Rezultat observat:
+\begin{itemize}
+	\item LED 2 (frame\_valid) rămâne stins
+	\item LED 3 (checksum\_err) pulsează scurt
+	\item Pozițiile servomotoarelor nu se modifică (mailbox-ul nu primește
+	      date noi)
+\end{itemize}
+
+\subsubsection{Cazul 3: Cadru incomplet (test timeout)}
+
+S-au transmis doar primii 5~octeți ai unui cadru, apoi s-a așteptat mai
+mult de 1\,ms fără a continua. Rezultat: modulul revine automat la starea
+S\_WAIT\_DIR, iar la transmiterea unui cadru complet ulterior, acesta este
+recepționat corect. Mecanismul de timeout previne blocarea permanentă a
+parser-ului.
+
+\subsection{Verificarea transmisiei cadrelor de răspuns}
+
+S-a transmis un cadru cu direcția 0xFE (cerere de citire). FPGA-ul a
+răspuns cu un cadru de 10~octeți conținând 0xFE + cele 8~unghiuri filtrate
+curente + checksum XOR. Cadrul recepționat pe PC a fost verificat:
+checksum-ul a fost corect, iar unghiurile au corespuns cu valorile afișate
+pe LED-uri.
+
+%==========================================================================
+\section{Testarea SPI și ADC}
+\label{sec:test-spi-adc}
+
+\subsection{Verificarea interfeței SPI}
+
+Testarea modulului \texttt{spi\_master} s-a realizat prin monitorizarea
+semnalelor SPI pe osciloscop, cu sondele conectate la pinii Pmod JC
+(SCLK, MOSI, MISO, CS).
+
+S-au verificat:
+\begin{itemize}
+	\item \textbf{Polaritatea SCLK:} SCLK este inactiv la nivel '1'
+	      (CPOL=1), confirmat vizual pe osciloscop
+	\item \textbf{Fazarea datelor:} MOSI se modifică pe frontul descrescător
+	      al SCLK, iar MISO este eșantionat pe frontul crescător (CPHA=1)
+	\item \textbf{Frecvența SCLK:} Măsurată la 5\,MHz ($\pm$0,1\,MHz),
+	      conform calcului 100\,MHz / 20
+	\item \textbf{Ordinea biților:} MSB first, verificat prin compararea
+	      secvenței de biți pe osciloscop cu valoarea transmisă
+\end{itemize}
+
+\subsection{Verificarea comunicării cu AD7124-8}
+
+Primul test de comunicare a constat în citirea registrului de identificare
+(ID register, adresa 0x05) al AD7124-8. Valoarea citită a fost comparată
+cu valoarea specificată în fișa de catalog (0x14 pentru AD7124-8). Citirea
+corectă a ID-ului confirmă:
+
+\begin{itemize}
+	\item Funcționarea corectă a masterului SPI
+	\item Integritatea izolării SPI prin MAX14850
+	\item Conexiunea electrică corectă între FPGA și ADC
+\end{itemize}
+
+\subsection{Verificarea scanării canalelor}
+
+După inițializarea completă a ADC-ului, s-a verificat că toate cele
+8~canale sunt scanate ciclic prin monitorizarea biților 3:0 ai octetului
+de status. Secvența observată (0, 1, 2, 3, 4, 5, 6, 7, 0, 1, \ldots)
+confirmă configurarea corectă a tuturor registrelor de canal.
+
+LED-ul 0 (adc\_cfg\_done) se aprinde la finalizarea secvenței de
+inițializare, iar LED-ul 1 (meas\_valid) pulsează periodic la fiecare
+ciclu complet de citire a tuturor celor 8~canale.
+
+%==========================================================================
+\section{Testarea filtrului Kalman}
+\label{sec:test-kalman}
+
+Filtrul Kalman a fost testat prin trei categorii de teste: convergență,
+răspuns la treapta și rejecția zgomotului.
+
+\subsection{Testul de convergență}
+
+\textbf{Obiectiv:} Verificarea că filtrul converge de la starea inițială
+(incertitudine mare, $P_\text{init} = 10,0$) la o estimare stabilă.
+
+\textbf{Procedură:} S-a furnizat o măsurătoare constantă de 90° pe toate
+cele 8~canale. S-a monitorizat evoluția unghiului filtrat pe LED-urile
+8--15 (care afișează unghiul servo 0).
+
+\textbf{Rezultat:} După aproximativ 20~de cicluri ($20 \times 20\,\text{ms}
+= 400\,\text{ms}$), unghiul filtrat s-a stabilizat la 90°. În primele
+cicluri, valoarea a crescut rapid de la 0° (valoarea inițială) către 90°,
+cu o tranziție exponențială caracteristică filtrului Kalman. Comportamentul
+este conform cu teoria: incertitudinea inițială mare ($P_{00} = 10,0$)
+face ca câștigul Kalman $K_0$ să fie aproape 1,0 în primele cicluri,
+permițând filtrului să ,,creadă'' rapid măsurătoarea. Pe măsură ce
+$P_{00}$ scade, câștigul se stabilizează la o valoare intermediară.
+
+\subsection{Testul de răspuns la treaptă}
+
+\textbf{Obiectiv:} Verificarea comportamentului filtrului la o schimbare
+bruscă a unghiului (de la 0° la 180°).
+
+\textbf{Procedură:} După stabilizarea filtrului la 0°, s-a transmis
+un cadru UART cu unghiul 180°. S-a monitorizat evoluția ieșirii filtrate.
+
+\textbf{Rezultat:} Filtrul a atins 90\% din valoarea finală (162°) în
+aproximativ 10~cicluri (200\,ms) și s-a stabilizat complet la 180° în
+aproximativ 15~cicluri (300\,ms). Comportamentul este un compromis între
+răspunsul rapid (determinat de $R$ mic, adică încredere în măsurătoare)
+și stabilitatea (determinată de $Q$ mic, adică încredere în predicție).
+Componentele de viteză ($x_1$) au demonstrat o creștere tranzitorie în
+timpul tranziției, confirmând că mecanismul de învățare a vitezei
+funcționează corect (ecuația~\ref{eq:update-x1}).
+
+\subsection{Testul de rejecție a zgomotului}
+
+\textbf{Obiectiv:} Compararea ieșirii filtrate cu măsurătoarea brută
+ADC pentru a evalua capacitatea de filtrare.
+
+\textbf{Procedură:} S-a poziționat manual un servomotor la un unghi
+fix și s-au citit simultan valoarea brută ADC (prin cadre de răspuns
+0xFE) și valoarea filtrată (de pe LED-uri și din unghiurile PWM).
+
+\textbf{Rezultat:} Valoarea brută ADC a prezentat fluctuații de
+$\pm$2--3° datorită zgomotului analogic și cuantizării. Ieșirea filtrată
+a prezentat fluctuații de maximum $\pm$0,5°, demonstrând o reducere a
+zgomotului cu factor de 4--6$\times$. Servomotorul controlat de ieșirea
+filtrată a fost vizibil mai stabil decât un servomotor controlat direct
+de valoarea brută.
+
+%==========================================================================
+\section{Testarea modului demo}
+\label{sec:test-demo}
+
+\subsection{Procedură}
+
+\begin{enumerate}
+	\item Se comută sw0 în poziția ON pe placa Basys3.
+	\item Se verifică LED 5 (demo mode active) --- trebuie aprins.
+	\item Se observă secvențele de mișcare ale servomotoarelor.
+	\item Se comută sw0 înapoi în poziția OFF pentru a verifica
+	      dezactivarea.
+\end{enumerate}
+
+\subsection{Rezultate}
+
+Toate secvențele demonstrative au fost executate corect:
+
+\begin{itemize}
+	\item \textbf{Deschidere/închidere pumn:} Toate cele 4~degete
+	      (pinky, ring, middle, index) se deschid și se închid
+	      simultan, cu mișcarea durând 1~secundă per tranziție.
+	\item \textbf{Fluturare:} Încheietura rotește alternativ stânga
+	      și dreapta, revenind la centru, cu o durată de 0,5~secunde
+	      per direcție.
+	\item \textbf{Flexii individuale:} Fiecare deget se închide
+	      individual în ordine (pinky, ring, middle, index), cu
+	      celelalte rămânând deschise.
+	\item \textbf{Thumbs up:} Degetele se închid, iar degetul mare
+	      rămâne extins --- gest vizual corect.
+	\item \textbf{Pointing:} Degetul arătător rămâne extins, restul
+	      se închid.
+	\item \textbf{Flexia cotului:} Servomotorul de cot flexează și
+	      extinde.
+\end{itemize}
+
+La dezactivarea sw0, secvența se oprește imediat, iar la reactivare
+pornește de la începutul ciclului (cadrul-cheie 0). Tranziția între
+modul demo și modul UART se realizează fără discontinuități datorită
+filtrării Kalman care netezește orice schimbare bruscă de unghi.
+
+%==========================================================================
+\section{Testare de integrare}
+\label{sec:test-integration}
+
+\subsection{Lanțul complet de semnal}
+
+Testarea de integrare a verificat funcționarea lanțului complet:
+\begin{center}
+Cadru UART $\rightarrow$ frame\_rx $\rightarrow$ mailbox $\rightarrow$
+source\_mux $\rightarrow$ kalman\_engine $\rightarrow$ pwm\_gen $\rightarrow$
+ADUM1400 $\rightarrow$ Servomotor MG996R
+\end{center}
+
+\textbf{Procedură:} S-au transmis cadre UART cu unghiuri variabile de la
+PC, generând mișcări ale servomotoarelor. S-a verificat vizual că mișcarea
+mâinii robotice corespunde unghiurilor comandate.
+
+\subsection{Măsurarea latenței end-to-end}
+
+Latența totală de la recepția unui cadru UART până la modificarea efectivă
+a semnalului PWM a fost estimată:
+
+\begin{table}[H]
+\centering
+\caption{Contribuțiile la latența end-to-end}
+\label{tab:latency}
+\begin{tabular}{@{}lr@{}}
+\toprule
+\textbf{Etapă} & \textbf{Durată} \\
+\midrule
+Recepție UART (10 octeți $\times$ 86,8\,$\mu$s) & 868\,$\mu$s \\
+Parsare cadru (instantanee, pipeline) & $<$1\,$\mu$s \\
+Depunere mailbox (instantanee) & $<$1\,$\mu$s \\
+Așteptare tick 20\,ms (caz mediu) & 10\,ms \\
+Execuție filtru Kalman (8 canale) & $\approx$14,6\,$\mu$s \\
+Propagare la ieșire PWM & $<$1\,$\mu$s \\
+\midrule
+\textbf{Total (caz mediu)} & $\approx$\textbf{10,9\,ms} \\
+\textbf{Total (caz cel mai defavorabil)} & $\approx$\textbf{20,9\,ms} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Latența dominantă este așteptarea tick-ului de 20\,ms în mailbox. Aceasta
+este inerentă arhitecturii servo (ciclul de 50\,Hz) și nu poate fi redusă
+fără a modifica perioadă de bază. Latența de procesare propriu-zisă a
+FPGA-ului (parsare + Kalman + PWM) este sub 15\,$\mu$s, cu trei ordine de
+mărime mai mică decât ciclul servo.
+
+\subsection{Verificarea indicatoarelor LED}
+
+S-au verificat toate combinațiile de stări LED în scenariile de funcționare:
+
+\begin{table}[H]
+\centering
+\caption{Starea LED-urilor în diferite scenarii de funcționare}
+\label{tab:led-states}
+\begin{tabular}{@{}lcccccccc@{}}
+\toprule
+\textbf{Scenariu} & \textbf{L0} & \textbf{L1} & \textbf{L2} & \textbf{L3} & \textbf{L4} & \textbf{L5} & \textbf{L6} & \textbf{L7} \\
+\midrule
+După pornire & ON & blink & --- & --- & blink & OFF & --- & blink \\
+Cadru valid & ON & blink & blink & --- & blink & OFF & --- & blink \\
+Eroare checksum & ON & blink & --- & blink & blink & OFF & --- & blink \\
+Mod demo & ON & blink & --- & --- & blink & ON & --- & blink \\
+Răspuns 0xFE & ON & blink & blink & --- & blink & OFF & blink & blink \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textit{Notă:} ,,blink'' indică pulsuri scurte periodice, ,,---'' indică
+absența activității pe acel LED. LED-ul 0 (ADC config done) rămâne
+permanent aprins după inițializare, confirmând configurarea reușită.
+
+%==========================================================================
+\section{Utilizarea resurselor FPGA}
+\label{sec:resource-utilization}
+
+Tabelul~\ref{tab:resources} prezintă utilizarea resurselor FPGA după
+sinteză și implementare pentru circuitul integrat Xilinx Artix-7
+XC7A35T (prezent pe placa Basys3).
+
+\begin{table}[H]
+\centering
+\caption{Utilizarea resurselor FPGA (Artix-7 XC7A35T)}
+\label{tab:resources}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Resursă} & \textbf{Disponibil} & \textbf{Utilizat} & \textbf{Procent} \\
+\midrule
+LUT-uri (Look-Up Tables) & 20\,800 & $\sim$3\,000 & 14\% \\
+Flip-flop-uri             & 41\,600 & $\sim$2\,500 & 6\% \\
+Block RAM (BRAM36)        & 50      & 2            & 4\% \\
+DSP48E1                   & 90      & 2--4         & 4\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Analiza utilizării}
+
+Gradul de utilizare global al FPGA-ului este redus (sub 15\% pe orice
+categorie de resursă), ceea ce oferă mai multe avantaje:
+
+\begin{enumerate}
+	\item \textbf{Marjă pentru extinderi:} Resursele rămase permit
+	      adăugarea de module suplimentare fără a necesita migrarea la
+	      un FPGA mai mare. De exemplu, un filtru Kalman cu 3~stări
+	      (adăugarea accelerației) ar necesita doar 2--4 DSP48E1
+	      suplimentare.
+
+	\item \textbf{Performanță temporală:} Gradul scăzut de utilizare
+	      a LUT-urilor facilitează rutarea cu căi de propagare scurte,
+	      garantând respectarea constrângerilor de timing la 100\,MHz
+	      fără dificultăți.
+
+	\item \textbf{Consum energetic redus:} Resursele neutilizate nu
+	      contribuie la consumul dinamic, menținând disiparea termică
+	      la un nivel scăzut.
+\end{enumerate}
+
+\subsection{Distribuția resurselor per modul}
+
+Principalii consumatori de resurse sunt:
+
+\begin{itemize}
+	\item \textbf{kalman\_engine:} Domină utilizarea LUT-urilor datorită
+	      aritmeticii Q16.16 (multiplicări, adunări pe 32~de biți) și a
+	      memoriei de stare (40 cuvinte $\times$ 32~biți). Blocurile
+	      DSP48E1 sunt utilizate pentru multiplicările implementate de
+	      funcția \texttt{mul\_q16} și pentru operațiile de diviziune.
+
+	\item \textbf{ad7124\_ctrl:} Consumă o parte semnificativă din
+	      flip-flop-uri datorită numărului mare de registre de stare
+	      (secvența de inițializare, numărătoare, registre de date).
+
+	\item \textbf{pwm\_gen (8 instanțe):} Fiecare instanță necesită un
+	      numărător pe 21~de biți și un comparator, totalizând
+	      $8 \times 21 = 168$ flip-flop-uri și logica de comparație
+	      aferentă.
+
+	\item \textbf{demo\_rom:} ROM-ul cu 21~de cadre-cheie este sintetizat
+	      în LUT-uri (nu în Block RAM) deoarece dimensiunea sa mică nu
+	      justifică utilizarea unui bloc BRAM dedicat.
+\end{itemize}
+
+Cele 2~blocuri Block RAM sunt utilizate de sintetizator pentru
+implementarea memoriei de stare a filtrului Kalman (\texttt{state\_ram},
+40 cuvinte $\times$ 32~biți) și pentru registrele interne ale
+controlerului ADC.

@@ -1,0 +1,131 @@
+\chapter{Obiectivele proiectului}\label{ch:obiective}
+\pagestyle{fancy}
+
+Proiectul de față își propune realizarea unui sistem de control pe FPGA pentru o
+mână robotică acționată de 8 servomotoare. Sistemul primește, printr-o interfață
+serială, unghiurile articulațiilor unei mâini umane urmărite de un sistem extern
+de viziune și le transformă în comenzi de poziție pentru servomotoare. Pentru ca
+mișcarea reprodusă să fie naturală și lipsită de tremur, datele primite sunt
+prelucrate de un filtru Kalman înainte de a fi trimise spre actuatoare. Pe lângă
+modul de operare comandat extern, sistemul poate funcționa și autonom, parcurgând
+secvențe de mișcare predefinite, iar separarea dintre logica de control și partea
+de putere este asigurată prin izolare galvanică.
+
+\section{Preluarea și filtrarea datelor pentru mimarea fidelă a mișcării}
+\label{sec:obj-principal}
+
+Obiectivul principal al proiectului este preluarea unghiurilor articulațiilor
+printr-o interfață serială și prelucrarea acestora astfel încât mâna robotică să
+reproducă cât mai fidel mișcarea mâinii umane. Datele de intrare descriu, pentru
+fiecare articulație, unghiul dorit, iar sistemul trebuie să convertească aceste
+valori în comenzi de poziție stabile, transmise în mod continuu către
+servomotoare. Calitatea acestei reproduceri reprezintă criteriul central după care
+este evaluat întregul sistem.
+
+Datele primite de la sistemul de viziune nu sunt însă perfecte, deoarece conțin
+zgomot și variații de la un cadru la altul, cauzate de erorile inerente ale
+procesului de detecție. Dacă aceste valori ar fi trimise direct la servomotoare, mișcarea
+rezultată ar fi sacadată, cu tremurături vizibile și nepotrivite cu gestul real.
+Pentru a corecta acest neajuns, sistemul aplică un filtru Kalman, care estimează
+poziția reală a fiecărei articulații pe baza valorilor zgomotoase primite și
+produce o traiectorie netedă și continuă. Filtrarea Kalman constituie astfel
+elementul central al lucrării, fiind componenta care transformă un flux brut de
+date într-o mișcare fluidă, apropiată de cea naturală.
+
+
+\section{Acționarea servomotoarelor pentru manipularea obiectelor}
+\label{sec:obj-pwm}
+
+Un obiectiv secundar al proiectului este acționarea precisă a celor 8
+servomotoare, astfel încât mâna robotică să poată executa gesturi utile, inclusiv
+apucarea și manipularea unor obiecte. Fiecare servomotor este controlat printr-un
+semnal de tip PWM, a cărui durată (\textit{pulse width}) determină poziția
+unghiulară a articulației corespunzătoare. Pentru a obține o mișcare coordonată a degetelor,
+toate cele 8 semnale trebuie generate simultan și actualizate sincron, fără
+întârzieri între canale. Tocmai aici intervine avantajul platformei FPGA. Spre
+deosebire de un microcontroler, care ar genera semnalele secvențial, FPGA-ul
+permite implementarea a 8 module PWM independente, ce funcționează în paralel și
+produc cele 8 semnale în mod perfect simultan.
+
+Acuratețea și stabilitatea acestor semnale sunt esențiale deoarece o variație nedorită a
+duratei pulsului se traduce printr-o tremurătură a articulației, iar lipsa
+sincronizării între canale ar face ca degetele să se miște la momente ușor
+diferite, compromițând prinderea fermă a unui obiect. Întrucât în FPGA fiecare
+semnal este generat de un circuit dedicat, sincronizat cu ceasul de sistem,
+acestea sunt precise și independente, îndeplinind cerințele acestui obiectiv.
+
+Pentru manipularea efectivă a obiectelor, nu este suficient ca fiecare deget să
+ajungă într-o poziție dorită, ci este nevoie ca toate degetele să își coordoneze
+mișcarea într-un gest unitar. Apucarea unui obiect presupune ca degetele să se
+închidă progresiv și împreună, până când obiectul este prins ferm. Dacă un singur
+canal ar fi întârziat sau instabil, prinderea ar deveni nesigură, iar obiectul ar
+putea aluneca. Din acest motiv, generarea simultană și sincronă a tuturor celor 8
+semnale nu este doar o cerință tehnică, ci condiția fundamentală pentru ca mâna
+robotică să poată îndeplini sarcini reale de manipulare.
+
+\section{Funcționarea autonomă}
+\label{sec:obj-autonom}
+
+Un alt obiectiv secundar este capacitatea sistemului de a funcționa autonom, fără
+a depinde de conexiunea cu un calculator extern. În acest mod, mâna robotică
+parcurge o secvență de mișcări predefinite, stocate intern, permițând
+demonstrarea funcționalității sistemului în lipsa sursei de date externe.
+
+Acest mod de operare este util atât pentru testarea independentă a părții de
+control și actuare, cât și pentru prezentarea sistemului în condiții în care
+echipamentul de captură nu este disponibil. Comutarea între modul comandat extern
+și cel autonom trebuie să fie simplă și să nu necesite reconfigurarea sistemului.
+
+Secvențele predefinite urmăresc demonstrarea principalelor capabilități ale mâinii
+robotice, printre care deschiderea și închiderea completă a degetelor, mișcările
+individuale ale fiecărui deget, precum și gesturi uzuale. În acest fel, modul autonom oferă o
+imagine clară asupra întregului interval de mișcare al sistemului și asupra
+funcționării corecte a fiecărui servomotor în parte, fără a depinde de o sursă
+externă de date.
+
+Din punct de vedere practic, acest obiectiv prezintă și un avantaj important pe
+parcursul dezvoltării. Întrucât partea de viziune și partea de control sunt
+realizate separat, modul autonom permite verificarea completă a sistemului de
+control înainte de integrarea cu sistemul de captură, eliminând dependența de
+disponibilitatea acestuia din urmă. Astfel, eventualele probleme de actuare pot fi
+identificate și corectate independent, ceea ce simplifică procesul de testare și
+validare.
+
+\section{Izolarea galvanică și siguranța}
+\label{sec:obj-izolare}
+
+Deoarece sistemul cuprinde două domenii electrice distincte, partea de logică de
+control la tensiune redusă și partea de putere care alimentează servomotoarele,
+un obiectiv secundar important este asigurarea unei separări galvanice între
+acestea. Această separare protejează componenta digitală de eventualele
+perturbații, vârfuri de curent sau zgomot generate de servomotoare în timpul
+funcționării.
+
+Necesitatea acestei separări devine evidentă dacă se ține cont de comportamentul
+electric al servomotoarelor. La pornire și în timpul mișcării, acestea pot
+genera vârfuri de curent și perturbații pe linia de alimentare, fenomene care, în
+absența unei separări, s-ar putea propaga către placa de control și ar putea
+afecta funcționarea logicii digitale sau chiar deteriora componentele acesteia.
+
+Izolarea galvanică asigură atât siguranța în funcționare, cât și integritatea
+semnalelor transmise între cele două domenii. În acest scop, semnalele de comandă
+către servomotoare și cele de comunicație sunt transferate prin componente
+dedicate de izolare, care permit trecerea informației fără a exista o legătură
+electrică directă între cele două părți. Îndeplinirea acestui obiectiv contribuie
+la fiabilitatea generală a sistemului și la protejarea plăcii de control împotriva
+defectelor care ar putea proveni din partea de putere.
+
+\section{Arhitectură modulară și încadrarea în resursele disponibile}
+\label{sec:obj-modular}
+
+Un ultim obiectiv secundar vizează organizarea sistemului într-o arhitectură
+modulară, în care fiecare funcție (comunicație, filtrare, generare a semnalelor,
+control) este implementată ca un bloc independent. O astfel de structură ușurează
+dezvoltarea, testarea și eventuala extindere ulterioară a sistemului, fiecare
+modul putând fi verificat separat.
+
+În plus, întreaga implementare trebuie să se încadreze în resursele limitate ale
+plăcii FPGA utilizate și să respecte constrângerile temporale impuse de
+funcționarea în timp real. Respectarea acestor limite reprezintă o cerință de
+proiectare permanentă, care influențează deciziile luate pe parcursul realizării
+fiecărui modul.

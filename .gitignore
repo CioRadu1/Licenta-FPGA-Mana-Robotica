@@ -1,0 +1,19 @@
+# LaTeX auxiliary files
+*.aux
+*.log
+*.toc
+*.lof
+*.lot
+*.out
+*.bbl
+*.blg
+*.bcf
+*.run.xml
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+# preview wrappers (chapter-by-chapter)
+licenta_intro.*
+licenta_obiective.*
+licenta_biblio.*
+licenta_analiza.*
