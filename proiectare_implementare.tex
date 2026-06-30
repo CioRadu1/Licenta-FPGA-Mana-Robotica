@@ -1,729 +1,563 @@
-\chapter{Proiectare de detaliu și implementare}\label{ch:proiectare}
+\chapter{Proiectare de detaliu și implementare}
+\label{ch:proiectare}
 \pagestyle{fancy}
 
-Acest capitol prezintă proiectarea detaliată și implementarea în VHDL a
-sistemului de control FPGA pentru mâna robotică. Fiecare modul hardware este
-descris din perspectiva funcționalității, a interfeței de porturi, a mașinii de
-stări interne și a deciziilor de proiectare adoptate. Codul sursă complet este
-inclus în anexe; în acest capitol se prezintă doar fragmente relevante,
-însoțite de explicații funcționale.
+Dacă în capitolul precedent au fost prezentate fundamentele teoretice ale
+sistemului, capitolul de față arată modul concret în care acestea au fost
+transpuse în realitate. Sunt descrise, pe rând, realizarea fizică a mâinii
+robotice, de la combinarea modelelor printate 3D până la montarea sistemului de
+acționare și a celui de feedback, precum și implementarea pe placa FPGA, cu
+detalierea fiecărui modul și a modului în care acestea conlucrează. O atenție
+deosebită este acordată închiderii temporale a circuitului, una dintre cele mai
+dificile etape ale proiectării digitale.
 
-%==========================================================================
-\section{Schema generală a sistemului}
-\label{sec:schema-generala}
+\section{Prezentarea generală a sistemului}
+\label{sec:proiectare-general}
 
-Sistemul este compus din 12 module VHDL interconectate ierarhic prin intermediul
-modulului de nivel superior \texttt{basys3\_top}. Figura~\ref{fig:block-diagram}
-prezintă diagrama bloc a întregului sistem, evidențiind fluxul de date de la
-intrarea UART până la ieșirile PWM.
+\subsection{Descrierea soluției implementate}
+
+Valorificând fundamentele teoretice prezentate în capitolul precedent, sistemul
+dezvoltat în cadrul acestei lucrări realizează controlul unei mâini robotice
+printate 3D, ale cărei articulații urmăresc în timp real mișcările mâinii unui
+operator uman. Soluția se împarte în mod natural în două componente strâns legate
+între ele. Pe de o parte se află ansamblul mecanic, alcătuit din piese printate 3D,
+fire de acționare, arcuri și servomotoare, care reproduce structura și mișcările
+unei mâini umane, pe de altă parte se află partea electronică și digitală,
+implementată pe placa FPGA, care primește comenzile, le prelucrează și le transformă
+în mișcarea efectivă a articulațiilor.
+
+Elementul central al implementării digitale este filtrul Kalman, care prelucrează
+unghiurile primite înainte ca acestea să fie transformate în comenzi pentru
+servomotoare. Necesitatea acestui filtru vine din faptul că unghiurile provenite din
+sistemul de viziune, deși corecte în ansamblu, conțin variații bruște și zgomot
+provenit din procesul de detecție vizuală. Trimise direct către servomotoare, aceste
+variații ar produce mișcări sacadate și tremurânde, nepotrivite cu gestul intenționat
+și solicitante pentru mecanism. Filtrul tratează fiecare dintre cele opt articulații
+ca pe un canal independent, modelat printr-un sistem cu două stări, poziție și
+viteză, și produce pentru fiecare o traiectorie netedă, care urmărește fidel mișcarea
+reală, eliminând în același timp tremurul. Un detaliu important al implementării este
+că toate cele opt canale sunt prelucrate de aceeași unitate de calcul, în mod
+secvențial, în interiorul unui singur ciclu de control, soluție care economisește
+resurse fără a compromite respectarea constrângerilor de timp.
+
+Pentru a putea funcționa, partea digitală are nevoie ca unghiurile să ajungă la ea
+într-o formă bine definită și verificată. Acest rol revine modulului de recepție,
+care extrage unghiurile dintr-un cadru transmis prin UART și le validează cu ajutorul
+unei sume de control, respingând cadrele afectate de erori de transmisie. Întrucât
+cadrele sosesc la momente dictate de calculatorul gazdă, fără legătură cu ritmul
+intern al plăcii, între recepție și filtru a fost adăugat un mecanism de sincronizare
+de tip cutie poștală, care garantează că filtrul lucrează întotdeauna pe un set de
+date stabil și complet. Pornind de la unghiurile filtrate, un generator dedicat
+produce cele opt semnale PWM care comandă efectiv poziția servomotoarelor, fiecare
+canal dispunând de propriul generator, astfel încât toate semnalele sunt produse
+simultan.
+
+Pe lângă funcția principală de urmărire a mâinii, sistemul oferă și un mod de
+funcționare autonomă. Acesta poate fi activat de pe placă și determină mâna să execute
+o secvență predefinită de mișcări, stocată într-o memorie internă, fără a mai fi
+necesară conexiunea cu calculatorul gazdă. Modul autonom este util atât pentru
+demonstrarea funcționării, cât și pentru testarea mecanică a ansamblului, independent
+de partea de viziune. În paralel cu toate acestea funcționează și o buclă de
+monitorizare, prin care un convertor analog-digital citește poziția reală a
+servomotoarelor și o transmite înapoi către placă, permițând observarea modului în
+care articulațiile răspund la comenzi.
+
+Pentru o mai bună înțelegere a modului în care aceste componente conlucrează, este
+utilă urmărirea drumului parcurs de o singură comandă, de la mișcarea operatorului
+până la mișcarea mâinii robotice. Sistemul de viziune detectează poziția mâinii și
+calculează cele opt unghiuri corespunzătoare articulațiilor. Aceste unghiuri sunt
+împachetate într-un cadru și transmise prin UART către placă. Modulul de recepție
+preia cadrul, verifică suma de control și depune unghiurile în cutia poștală. La
+începutul fiecărui ciclu de control, care se repetă o dată la 20 de milisecunde,
+filtrul Kalman preia cel mai recent set de unghiuri disponibil și îl prelucrează,
+canal cu canal, producând unghiurile netezite. Acestea sunt transmise generatoarelor
+PWM, care le transformă în impulsuri de durată corespunzătoare, iar impulsurile,
+după trecerea prin izolatoarele galvanice, ajung la servomotoare și produc mișcarea
+articulațiilor. Între timp, convertorul analog-digital citește pozițiile reale și le
+trimite înapoi pe placă, închizând astfel ciclul de observare.
+
+În cele ce urmează, cele două componente sunt tratate separat. Mai întâi este
+descrisă realizarea fizică a mâinii, cu accent pe provocările întâmpinate la
+combinarea modelelor și la montarea sistemului de acționare, după care se trece la
+implementarea digitală pe placa FPGA, prezentată modul cu modul.
+
+\needspace{12\baselineskip}
+\subsection{Diagrama de sistem}
+
+Privit în ansamblu, sistemul este alcătuit din lanțul de componente reprezentat în
+Figura~\ref{fig:schema-sistem}.
 
 \begin{figure}[H]
-\centering
-\fbox{\parbox{0.95\textwidth}{\centering\vspace{6pt}
-\small
-\texttt{uart\_rx} $\rightarrow$ \texttt{frame\_rx} $\rightarrow$
-\texttt{mailbox} $\rightarrow$ \texttt{source\_mux} $\rightarrow$
-\texttt{kalman\_engine} $\rightarrow$ \texttt{pwm\_gen} (8 instanțe)\\[4pt]
-\texttt{system\_tick\_gen} --- ceas 20\,ms pentru toate modulele\\[4pt]
-\texttt{demo\_rom} $\rightarrow$ \texttt{source\_mux} (intrare alternativă)\\[4pt]
-\texttt{spi\_master} $\leftarrow$ \texttt{ad7124\_ctrl} $\rightarrow$
-\texttt{kalman\_engine} (feedback ADC)\\[4pt]
-\texttt{frame\_tx} $\rightarrow$ \texttt{uart\_tx} (răspuns către PC)
-\vspace{6pt}}}
-\caption{Diagrama bloc a sistemului --- fluxul de interconectare al modulelor VHDL}
-\label{fig:block-diagram}
+	\centering
+	\includegraphics[width=\textwidth]{figs/schema_sistem.pdf}
+	\caption{Diagrama de sistem, cu lanțul principal de comandă, bucla de
+	monitorizare prin convertorul analog-digital și sursele de alimentare.}
+	\label{fig:schema-sistem}
 \end{figure}
 
-Cele 12 module sunt enumerate în Tabelul~\ref{tab:module-list}, împreună cu
-rolul funcțional al fiecăruia.
+La un capăt se află calculatorul gazdă, care
+transmite unghiurile prin UART, iar la celălalt capăt se găsesc cele opt
+servomotoare care produc mișcarea. Între ele, placa Basys3 prelucrează datele și
+comandă servomotoarele prin intermediul a două izolatoare ADuM1400, care asigură
+separarea galvanică a celor opt semnale PWM. Alimentarea servomotoarelor este
+furnizată de modulul DC2468A, care coboară tensiunea la 5~V.
 
-\begin{table}[H]
-\centering
-\caption{Lista modulelor VHDL și rolul lor în sistem}
-\label{tab:module-list}
-\begin{tabular}{@{}lp{9cm}@{}}
-\toprule
-\textbf{Modul} & \textbf{Rol funcțional} \\
-\midrule
-\texttt{system\_tick\_gen} & Generează pulsul periodic de 20\,ms \\
-\texttt{uart\_rx}          & Recepția serială UART la 115\,200\,baud \\
-\texttt{uart\_tx}          & Transmisia serială UART la 115\,200\,baud \\
-\texttt{frame\_rx}         & Parser de cadre de 10\,octeți cu verificare checksum \\
-\texttt{frame\_tx}         & Serializare cadru de răspuns (direcție 0xFE) \\
-\texttt{mailbox}           & Buffer dublu (ping-pong) pentru decuplare temporală \\
-\texttt{source\_mux}       & Multiplexor combinațional: UART vs. demo \\
-\texttt{demo\_rom}         & ROM cu 21 de cadre-cheie pentru mod demonstrativ \\
-\texttt{spi\_master}       & Master SPI mod~3, 5\,MHz \\
-\texttt{ad7124\_ctrl}      & Controler pentru ADC-ul AD7124-8 \\
-\texttt{kalman\_engine}    & Filtru Kalman cu 2 stări, Q16.16, 8 canale \\
-\texttt{pwm\_gen}          & Generator PWM pentru un servo (8 instanțe) \\
-\bottomrule
-\end{tabular}
-\end{table}
+Bucla de monitorizare, reprezentată prin linii întrerupte, pornește de la
+servomotoare către convertorul AD7124-8, care citește poziția reală, și se întoarce
+la placă prin izolatorul SPI MAX14850. Convertorul este alimentat la 3,3~V printr-un
+regulator liniar ADP165, separat de alimentarea servomotoarelor pentru a-i asigura
+o tensiune curată. Această organizare reflectă fidel principiile de izolare și de
+alimentare fundamentate în capitolul precedent.
 
-Interconexiunile dintre module respectă principiul fluxului de date
-unidirecțional: datele curg de la recepția UART către generarea PWM, cu o
-ramură de feedback de la ADC prin filtrul Kalman. Semnalul de ceas de 20\,ms
-(\texttt{tick\_20ms}) sincronizează toate modulele, asigurând că actualizarea
-servomotoarelor se face cu o perioadă fixă, independentă de rata de sosire a
-cadrelor UART.
+\subsection{Mediul de dezvoltare și platforma}
 
-%==========================================================================
-\section{Modulul \texttt{system\_tick\_gen}}
-\label{sec:system-tick-gen}
+Partea digitală a fost descrisă în limbajul VHDL și dezvoltată în mediul Vivado,
+folosit atât pentru sinteză și implementare, cât și pentru analiza temporală a
+circuitului. Platforma de execuție este placa Basys3, construită în jurul unui
+circuit FPGA Xilinx Artix-7 XC7A35T, care funcționează la o frecvență de ceas de
+100~MHz. Placa pune la dispoziție conectoare Pmod prin care sunt scoase semnalele
+PWM către servomotoare și magistrala SPI către convertor, precum și o interfață
+UART prin portul USB.
 
-Modulul \texttt{system\_tick\_gen} generează un puls de sincronizare cu
-perioada exactă de 20\,ms, necesară pentru ciclul standard al servomotoarelor
-(50\,Hz). Implementarea se bazează pe un numărător pe 21 de biți care
-numără de la 0 la 1\,999\,999, corespunzând celor 2\,000\,000 de cicluri
-de ceas la 100\,MHz necesare pentru 20\,ms.
+Partea mecanică a fost modelată și pregătită pentru printare în mediul Bambu Studio,
+iar piesele au fost fabricate pe o imprimantă Bambu Lab A1. Detaliile privind
+parametrii de printare și adaptările aduse modelelor sunt prezentate în secțiunea
+dedicată realizării fizice a mâinii.
 
-\subsection{Interfața de porturi}
+\section{Realizarea fizică a mâinii robotice}
+\label{sec:proiectare-fizic}
 
-\begin{table}[H]
-\centering
-\caption{Porturile modulului \texttt{system\_tick\_gen}}
-\begin{tabular}{@{}llp{7.5cm}@{}}
-\toprule
-\textbf{Port} & \textbf{Direcție} & \textbf{Descriere} \\
-\midrule
-\texttt{clk}       & intrare  & Ceasul de sistem, 100\,MHz \\
-\texttt{rst}       & intrare  & Reset sincron \\
-\texttt{tick\_20ms} & ieșire   & Puls de un ciclu de ceas la fiecare 20\,ms \\
-\texttt{tick\_cnt}  & ieșire   & Valoarea curentă a numărătorului (21\,biți) \\
-\bottomrule
-\end{tabular}
-\end{table}
+Construcția fizică a mâinii a reprezentat o etapă amplă și plină de provocări, în
+care modelele open-source studiate în capitolul de studiu bibliografic au fost
+combinate, adaptate și completate cu piese proprii, până la obținerea unui ansamblu
+funcțional. Această secțiune descrie pe rând combinarea modelelor, integrarea
+servomotoarelor, sistemul de acționare prin fire și arcuri, sistemul de feedback și,
+în final, fabricarea pieselor prin printare 3D.
 
-\subsection{Funcționare}
+\subsection{Combinarea modelelor și adaptările aduse}
 
-Numărătorul \texttt{counter} este de tip \texttt{unsigned(20 downto 0)} și se
-incrementează la fiecare front crescător al ceasului. Când atinge valoarea
-constantei \texttt{PERIOD} = 1\,999\,999, se resetează la zero. Ieșirea
-\texttt{tick\_20ms} este '1' exclusiv în ciclul de ceas în care numărătorul
-egalează \texttt{PERIOD}, generând astfel un puls de exactmente un ciclu de
-ceas (10\,ns) la fiecare 20\,ms.
+Punctul de plecare l-a constituit studiul modelelor existente și încercarea de a le
+combina într-un singur ansamblu coerent. Fiecare model a contribuit cu partea sa cea
+mai potrivită. De la proiectul InMoov a fost preluat mecanismul de rotație a
+încheieturii, apreciat pentru modul bine gândit în care ghidează firele, de la
+modelul dezvoltat de Ryonicle au fost preluate palma și degetele, iar pentru zona de
+la încheietură în jos, mai exact antebrațul și articulația cotului, s-a pornit de la
+modelul propus de Hussein. Combinarea acestor componente provenite de la autori
+diferiți nu a fost însă directă, deoarece ele nu fuseseră gândite pentru a fi
+îmbinate între ele, având dimensiuni și interfețe de prindere diferite.
 
-Ieșirea \texttt{tick\_cnt} furnizează valoarea curentă a numărătorului,
-utilizată de modulul \texttt{pwm\_gen} pentru compararea cu pragul PWM.
-Deoarece ambele module partajează același numărător de bază, semnalele PWM
-sunt perfect sincronizate cu ciclul de 20\,ms.
+Din acest motiv a fost necesară o muncă susținută de modelare și remodelare, prin
+care piesele să fie aduse la o scară comună și să poată fi cuplate corect. Cea mai
+importantă intervenție a vizat îmbinarea dintre antebraț și încheietură, zonă în
+care cele două modele nu se potriveau. Pentru a rezolva această problemă a fost
+modelată o piesă proprie, sub forma unui semicerc prevăzut cu găuri, prezentată în
+Figura~\ref{fig:semicerc}, care face
+legătura între partea superioară și partea inferioară a antebrațului, asigurând o
+prindere solidă și aliniată a celor două subansamble. Această piesă, alături de
+celelalte adaptări, a transformat colecția de modele separate într-un braț unitar.
 
-Calcul: $100\,\text{MHz} \times 20\,\text{ms} = 100 \times 10^6 \times 20
-\times 10^{-3} = 2\,000\,000$ cicluri. Numărătorul numără $0, 1, \ldots,
-1\,999\,999$, deci necesită $\lceil \log_2(2\,000\,000) \rceil = 21$ biți.
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.48\textwidth]{figs/semicerc_lateral.jpg}\hfill
+	\includegraphics[width=0.48\textwidth]{figs/semicerc_sus.jpg}
+	\caption{Semicercul propriu de îmbinare a antebrațului, vedere laterală și de sus.}
+	\label{fig:semicerc}
+\end{figure}
 
-%==========================================================================
-\section{Modulul \texttt{uart\_rx} --- Recepția UART}
-\label{sec:uart-rx}
+\subsection{Integrarea servomotoarelor și sistemul de pulley-uri}
 
-Modulul \texttt{uart\_rx} implementează un receptor UART complet la
-115\,200\,baud, cu protecție contra metastabilității și eșantionare la mijlocul
-bitului. Configurația este 8N1 (8 biți de date, fără paritate, 1 bit de stop).
+Una dintre cele mai dificile provocări mecanice a fost amplasarea celor opt
+servomotoare în interiorul ansamblului. Spațiul disponibil este limitat, iar
+servomotoarele alese au o cursă de 180 de grade, ceea ce a impus o gândire atentă a
+modului de prindere și de transmitere a mișcării. Un servomotor cu o cursă mai mare,
+de exemplu de 270 de grade, ar fi oferit mai multă libertate, însă cuplul ridicat și
+disponibilitatea servomotoarelor folosite au cântărit mai mult în alegerea finală.
 
-\subsection{Calculul parametrilor de baud}
+Cea mai delicată parte a fost transmiterea mișcării prin sistemul de pulley-uri.
+Servomotoarele care acționează degetele sunt dispuse pe două rânduri. Pe rândul din
+spate se află două servomotoare, unul cu pulley înălțat și unul cu pulley obișnuit,
+iar pe rândul din față se află trei, dintre care cele de pe margini, din stânga și
+din dreapta, au pulley înălțat, iar cel din mijloc are pulley obișnuit. Pulley-urile
+înălțate au fost necesare pentru a ridica șanțul firului față de planul
+servomotorului, astfel încât firele și arcurile care vin de la articulațiile mai
+îndepărtate să treacă pe deasupra servomotoarelor vecine, fără a se freca de ele și
+fără a se bloca. Diferența dintre cele două variante este vizibilă în
+Figura~\ref{fig:pulley}.
 
-Rata de ceas a sistemului este de 100\,MHz, iar rata de transfer (baud rate)
-este de 115\,200\,baud. Numărul de cicluri de ceas pe bit este:
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.44\textwidth]{figs/pulley_normal.jpg}\hfill
+	\includegraphics[width=0.44\textwidth]{figs/pulley_inalt.jpg}
+	\caption{Pulley obișnuit (stânga) și pulley înălțat (dreapta).}
+	\label{fig:pulley}
+\end{figure}
 
-\begin{equation}
-\text{CLKS\_PER\_BIT} = \frac{100\,000\,000}{115\,200} - 1 = 868 - 1 = 867
-\label{eq:clks-per-bit}
-\end{equation}
+\subsection{Sistemul de acționare prin fire și arcuri}
 
-Scăderea cu 1 se datorează faptului că numărătorul pornește de la 0. Pentru
-eșantionarea la mijlocul bitului, se utilizează constanta:
+Acționarea degetelor se realizează prin fire care joacă rolul tendoanelor, conform
+principiului prezentat în capitolul de analiză. Pentru aceste fire a fost ales un fir
+de pescuit din comerț, foarte fin, cu un diametru de 0,27~mm și o rezistență la
+rupere de 14~kg. Finețea firului îi permite să alunece prin canalele de ghidare din
+interiorul pieselor, iar rezistența ridicată asigură că suportă fără probleme forțele
+dezvoltate de servomotoare.
 
-\begin{equation}
-\text{HALF\_BIT} = \left\lfloor \frac{868}{2} \right\rfloor - 1 = 433
-\label{eq:half-bit}
-\end{equation}
+Firul nu leagă însă direct servomotorul de deget, ci este împărțit în două segmente,
+între care se află un arc. Astfel, un segment merge de la deget la arc, iar celălalt
+de la arc la servomotor. Arcurile folosite au fost procurate dintr-un târg de
+vechituri și au toate aceeași rezistență, astfel încât preiau tensiunea în mod
+uniform pe toate canalele. Rolul lor, detaliat în capitolul de analiză, este de a
+prelua vârfurile de tensiune și de a proteja firul și mecanismul în cazul unor
+solicitări bruște. Revenirea degetelor în poziția deschisă se face pasiv, cu ajutorul
+unor elemente elastice care joacă rolul tendoanelor extensoare. Figura~\ref{fig:arcuri}
+prezintă arcurile montate în serie pe fire, în interiorul antebrațului, pe traseul
+dintre servomotoare și degete.
 
-Eșantionarea la mijlocul bitului este esențială deoarece semnalul serial
-prezintă tranziții la granițele biților, iar valorile sunt stabile doar în
-zona centrală. Prin așteptarea a 433 de cicluri după detectarea frontului
-descrescător al bitului de start, receptorul se poziționează în centrul
-fiecărui bit, maximizând marja de toleranță la variațiile de frecvență
-între emițător și receptor.
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.5\textwidth]{figs/arcuri_montate.jpg}
+	\caption{Arcurile montate în serie pe firele de acționare.}
+	\label{fig:arcuri}
+\end{figure}
 
-\subsection{Protecția contra metastabilității}
-\label{subsec:metastability}
+\subsection{Sistemul de feedback al servomotoarelor}
 
-Semnalul \texttt{rx\_serial} provine dintr-un domeniu de ceas extern (linia
-UART a PC-ului) și este asincron față de ceasul FPGA de 100\,MHz. Când un
-semnal asincron este eșantionat de un flip-flop, există o probabilitate
-nenulă ca acesta să fie capturat exact în momentul tranziției, rezultând o
-stare metastabilă --- o tensiune intermediară între '0' și '1' care nu se
-rezolvă în timpul de setup al flip-flop-ului. Această situație poate provoca
-comportament nedeterminist în logica din aval.
+Una dintre cele mai laborioase etape ale construcției a fost realizarea sistemului de
+feedback, prin care poziția reală a fiecărui servomotor poate fi citită de placa
+FPGA. Servomotoarele folosite nu oferă în mod nativ un semnal de poziție la exterior,
+astfel încât acesta a trebuit obținut prin intervenție directă. Fiecare servomotor a
+fost desfăcut, iar pe pinul central al potențiometrului intern, care indică poziția
+axului, a fost lipit un fir suplimentar, așa cum se vede în Figura~\ref{fig:feedback-lipit}.
+În acest fel, tensiunea de pe potențiometru,
+proporțională cu unghiul servomotorului, devine accesibilă în exterior.
 
-Soluția standard constă în utilizarea a două flip-flop-uri în cascadă,
-cunoscute sub numele de \textit{synchronizer} sau \textit{double-FF}:
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.5\textwidth]{figs/servo_feedback_lipit.jpg}
+	\caption{Firul de feedback lipit pe potențiometrul intern al servomotorului.}
+	\label{fig:feedback-lipit}
+\end{figure}
 
-\begin{lstlisting}[caption={Sincronizator cu dublu flip-flop pentru protecția contra metastabilității},label={lst:metastab}]
-signal rx_sync1 : std_logic := '1';
-signal rx_sync2 : std_logic := '1';
+Toate aceste fire de feedback au fost organizate în funcție de canal, prinse cu cleme,
+etichetate și extinse până în zona umărului brațului, unde au fost grupate într-un
+singur loc, alături de firele de comandă, pentru a fi mai ușor de gestionat.
+Figura~\ref{fig:fire} arată acest fascicul de fire, fiecare purtând o etichetă cu
+articulația căreia îi corespunde.
 
-process(clk)
-begin
-    if rising_edge(clk) then
-        rx_sync1 <= rx_serial;
-        rx_sync2 <= rx_sync1;
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.6\textwidth]{figs/fire_etichetate.jpg}
+	\caption{Fasciculul de fire de feedback, etichetate pe articulații.}
+	\label{fig:fire}
+\end{figure}
+
+Un aspect important este că semnalul de feedback nu este uniform de la un servomotor
+la altul. La poziția de 0 grade, tensiunea măsurată este de aproximativ 0,382~V, iar la
+180 de grade ajunge la circa 2,9~V. Pentru ca aceste valori să poată fi preluate corect
+de convertor, fără a depăși tensiunea sa de referință de 2,5~V, fiecare semnal de
+feedback este atenuat printr-un divizor rezistiv, montat pe o plăcuță separată,
+prezentată în Figura~\ref{fig:divizoare}. Detaliile divizorului sunt prezentate în
+secțiunea dedicată montajului electronic.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.6\textwidth]{figs/divizoare_rezistive.jpg}
+	\caption{Plăcuța cu divizoarele rezistive de atenuare și convertorul AD7124-8.}
+	\label{fig:divizoare}
+\end{figure}
+
+\subsection{Fabricarea prin printare 3D}
+
+Toate piesele mecanice ale brațului au fost fabricate prin printare 3D, la domiciliu,
+folosind o imprimantă Bambu Lab A1. Pentru a obține piese cât mai precise și cu o
+suprafață cât mai îngrijită, înălțimea unui strat a fost setată la o valoare mică, de
+0,08~mm. Această alegere a crescut durata de printare, dar a dus la piese de o calitate
+foarte bună, cu detalii fine și cu o rezistență corespunzătoare solicitărilor
+mecanice la care sunt supuse.
+
+Un criteriu important în alegerea modelelor a fost prezența unor canale interioare prin
+care firele de acționare să poată circula fără obstacole. Toate piesele printate
+dispun de astfel de canale, vizibile în Figura~\ref{fig:canale}, ceea ce permite
+firelor să treacă prin interiorul degetelor și al palmei în mod ghidat, fără să se
+agațe sau să se frece de pereți. Această particularitate s-a dovedit esențială pentru
+buna funcționare a sistemului de acționare prin tendoane.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.58\textwidth]{figs/canale_fire.jpg}
+	\caption{Canalele interioare de ghidare a firelor în piesele printate 3D.}
+	\label{fig:canale}
+\end{figure}
+
+În final, după combinarea modelelor, montarea servomotoarelor, a sistemului de
+acționare și a celui de feedback, a rezultat ansamblul complet prezentat în
+Figura~\ref{fig:mana-completa}. Se observă mâna cu cele cinci degete, palma,
+încheietura și antebrațul care găzduiește servomotoarele, pulley-urile și fasciculul
+de fire.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.62\textwidth]{figs/mana_completa.jpg}
+	\caption{Ansamblul complet al brațului robotic.}
+	\label{fig:mana-completa}
+\end{figure}
+
+\section{Realizarea montajului electronic}
+\label{sec:proiectare-electronic}
+
+Partea electronică a sistemului leagă placa FPGA de servomotoare și de convertorul
+analog-digital, respectând principiile de izolare și de alimentare fundamentate în
+capitolul de analiză. Realizarea ei a pornit de la alegerea componentelor potrivite
+și a continuat cu construirea efectivă a montajului, etapă care a ridicat o serie de
+provocări practice.
+
+\subsection{Izolarea și translatarea de nivel a semnalelor PWM}
+
+Primul pas a fost identificarea unei componente de izolare potrivite din gama Analog
+Devices, alegerea oprindu-se asupra izolatorului ADuM1400. Pe lângă rolul de izolare
+galvanică, acesta rezolvă și o a doua problemă, la fel de importantă. Placa Basys3
+scoate semnalele logice la 3,3~V, în timp ce servomotoarele MG996R așteaptă semnal
+PWM la nivel de 5~V. Izolatorul ADuM1400 dispune de alimentări independente pe cele
+două laturi, fiind alimentat la 3,3~V pe partea dinspre placă și la 5~V pe partea
+dinspre servomotoare, astfel încât realizează în același timp și o translatare a
+nivelului logic de la 3,3~V la 5~V. În felul acesta, o singură componentă rezolvă
+atât izolarea, cât și adaptarea de nivel necesară comenzii corecte a
+servomotoarelor.
+
+Pentru a putea lucra cu acest izolator a fost folosită placa de evaluare dedicată,
+care include o zonă de prototipare deosebit de utilă. Pe această zonă a putut fi
+gândit dinainte modul de amplasare a componentelor, profitând de traseele de
+alimentare și de date deja existente pe placă. În cadrul acestei etape a fost
+identificată și necesitatea înlăturării unei rezistențe de 0~$\Omega$ de pe placa de
+evaluare, care altfel ar fi cerut o alimentare suplimentară fără rost în configurația
+folosită. Modul de amplasare gândit pe zona de prototipare este prezentat în
+Figura~\ref{fig:layout-adum}, unde sunt marcate canalele pe care urmau să fie lipiți
+pinii și conectate servomotoarele, atât alimentarea, cât și liniile de date.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.85\textwidth]{figs/layout_adum_eval.png}
+	\caption{Amplasarea componentelor pe zona de prototipare a plăcii de evaluare
+	ADuM1400. Cu verde sunt marcate canalele pentru pinii servomotoarelor.}
+	\label{fig:layout-adum}
+\end{figure}
+
+Întrucât un singur izolator ADuM1400 dispune de patru canale, iar sistemul are nevoie
+de opt semnale PWM, au fost folosite două astfel de plăci. Izolatoarele au fost
+lipite, la fel ca restul componentelor, individual. Între pinii de alimentare ai
+servomotoarelor a fost adăugat un condensator de aproximativ 70~$\mu$F, pentru a
+asigura o funcționare stabilă a acestora și a acoperi vârfurile de curent care apar
+la pornirea motoarelor.
+
+\subsection{Bucla de feedback și normalizarea semnalelor}
+
+Pe calea de feedback, semnalele de poziție provenite de la servomotoare sunt citite
+de convertorul AD7124-8, folosind intrările sale de la 0 la 7. Comunicația dintre
+convertor și placa Basys3 trece prin izolatorul SPI MAX14850, conectat la rândul lui
+la conectorul Pmod al plăcii. Astfel, întregul lanț de feedback rămâne separat
+galvanic de partea de putere.
+
+Așa cum s-a arătat în secțiunea dedicată sistemului de feedback, semnalele provenite
+de la potențiometrele servomotoarelor pot ajunge până la aproximativ 2,9~V, ceea ce
+depășește tensiunea de referință de 2,5~V a convertorului. Pentru a le aduce sub
+această limită, fiecare semnal trece printr-un divizor rezistiv, realizat pe o plăcuță
+separată. Divizorul folosește o rezistență $R_1 = 100$~k$\Omega$ în calea semnalului și
+una $R_2 = 300$~k$\Omega$ spre masă, conform schemei din Figura~\ref{fig:divizor-schema}.
+Tensiunea de ieșire rezultă din raportul divizorului,
+%
+\begin{equation*}
+V_\text{ies} = V_\text{in} \cdot \frac{R_2}{R_1 + R_2}
+= V_\text{in} \cdot \frac{300}{100 + 300} = 0{,}75 \cdot V_\text{in},
+\end{equation*}
+%
+astfel încât tensiunea maximă de 2,9~V devine aproximativ 2,18~V, încadrându-se
+confortabil sub referința convertorului. Montajul efectiv al acestor divizoare,
+împreună cu placa convertorului, este prezentat în Figura~\ref{fig:divizoare}.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.7\textwidth]{figs/divizor_schema.pdf}
+	\caption{Schema unui divizor rezistiv de pe calea de feedback.}
+	\label{fig:divizor-schema}
+\end{figure}
+
+\subsection{Alimentarea montajului}
+
+Alimentarea întregului montaj pornește de la o sursă externă și este distribuită prin
+modulul DC2468A, care furnizează tensiunea de 5~V necesară servomotoarelor. Tot din
+acesta este alimentat și regulatorul liniar ADP165, care coboară tensiunea la 3,3~V
+pentru convertorul analog-digital, asigurându-i o alimentare curată, separată de cea a
+servomotoarelor. Lanțul de alimentare urmează astfel un traseu clar, de la sursă către
+DC2468A, iar de acolo, pe de o parte direct la servomotoare, iar pe de altă parte prin
+ADP165 către convertor.
+
+Modulul DC2468A permite și modificarea unei rezistențe pentru a obține o tensiune de
+6~V, care ar fi corespuns funcționării la putere maximă a servomotoarelor. Această
+modificare nu a fost însă necesară în configurația actuală și rămâne o posibilă
+direcție de dezvoltare ulterioară. Întregul ansamblu electronic, cu toate plăcile
+interconectate, este prezentat în Figura~\ref{fig:montaj-electronic}.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.8\textwidth]{figs/montaj_electronic.jpg}
+	\caption{Ansamblul electronic complet, cu placa Basys3, cele două izolatoare
+	ADuM1400, izolatorul SPI MAX14850, convertorul AD7124-8 și sursele de alimentare.}
+	\label{fig:montaj-electronic}
+\end{figure}
+
+\section{Implementarea pe placa FPGA}
+\label{sec:proiectare-fpga}
+
+Partea digitală a sistemului reprezintă contribuția centrală a acestei lucrări și
+este descrisă în VHDL ca un ansamblu de module care funcționează în paralel,
+sincronizate de același ceas de sistem. Această secțiune prezintă arhitectura
+internă a circuitului și detaliază, pe rând, modulele care o compun, insistând
+asupra celor care au ridicat cele mai multe probleme de proiectare.
+
+\needspace{14\baselineskip}
+\subsection{Arhitectura modulară}
+
+Întregul circuit este organizat în jurul unui modul de nivel superior, care
+instanțiază și interconectează modulele specializate. Organizarea acestora și fluxul
+datelor între ele sunt prezentate în Figura~\ref{fig:arhitectura-module}.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.82\textwidth]{figs/arhitectura_module.png}
+	\caption{Arhitectura internă a circuitului implementat pe placa Basys3, cu
+	modulele componente și fluxul datelor între acestea.}
+	\label{fig:arhitectura-module}
+\end{figure}
+
+Pe calea principală de comandă, datele intră prin modulul \texttt{uart\_rx}, care
+recuperează octeții de pe linia serială, sunt asamblate în cadre de către
+\texttt{frame\_rx} și depuse în \texttt{mailbox}. De acolo, prin multiplexorul
+\texttt{source\_mux}, ajung la \texttt{kalman\_engine}, care le filtrează, iar
+rezultatul este transformat în semnale de comandă de către generatoarele
+\texttt{pwm\_gen}. Pe calea de feedback, modulul \texttt{ad7124\_ctrl} comandă
+convertorul prin \texttt{spi\_master} și recuperează pozițiile măsurate. Un modul
+\texttt{system\_tick\_gen} produce semnalul de sincronizare de 20~ms care ritmează
+întregul sistem, iar modulele \texttt{demo\_rom} și \texttt{frame\_tx} asigură modul
+autonom, respectiv transmiterea valorilor înapoi către calculator.
+
+\subsection{Generarea semnalului de sincronizare}
+
+Ritmul întregului sistem este dat de un semnal care marchează începutul fiecărui
+ciclu de control de 20~ms. Acesta este produs de un numărător care pornește de la
+ceasul de 100~MHz și generează un impuls scurt la fiecare 2.000.000 de perioade de
+ceas, ceea ce corespunde exact intervalului de 20~ms. Toate celelalte module se
+raportează la acest semnal, astfel încât filtrarea, citirea convertorului și
+actualizarea comenzilor se desfășoară sincronizat.
+
+\subsection{Recepția și validarea cadrelor}
+
+Recepția datelor se realizează în doi pași. Mai întâi, modulul \texttt{uart\_rx}
+reconstituie fiecare octet de pe linia serială, eșantionând biții la mijlocul
+intervalului lor pentru a maximiza marja față de tranziții. Pentru a evita
+problemele de metastabilitate, linia de intrare este trecută mai întâi prin două
+bistabile înseriate, înainte de a fi folosită.
+
+Octeții astfel recuperați sunt preluați de modulul \texttt{frame\_rx}, care îi
+asamblează într-un cadru complet și îi validează. Acesta funcționează ca o mașină
+cu stări, care așteaptă mai întâi octetul de direcție, apoi colectează cele opt
+unghiuri și, în final, verifică suma de control. Verificarea se bazează pe
+proprietatea operației SAU exclusiv, conform căreia suma de control a unui cadru
+corect, combinată din nou cu toți octeții, trebuie să dea zero.
+
+\needspace{18\baselineskip}
+\begin{lstlisting}[caption={Verificarea sumei de control la recepție.},label={lst:checksum}]
+when S_RECV_CHKSUM =>
+    if rx_valid = '1' then
+        if (xor_acc xor rx_data) = x"00" then
+            frame_valid  <= '1';
+            frame_dir    <= dir_reg;
+            frame_angles <= angles_reg;
+        else
+            checksum_err <= '1';
+        end if;
+        state <= S_WAIT_DIR;
     end if;
-end process;
 \end{lstlisting}
 
-Primul flip-flop (\texttt{rx\_sync1}) poate intra în stare metastabilă, dar
-are un ciclu de ceas complet (10\,ns la 100\,MHz) pentru a se rezolva înainte
-ca al doilea flip-flop (\texttt{rx\_sync2}) să-l eșantioneze. Probabilitatea
-ca metastabilitatea să se propage prin ambele flip-flop-uri este neglijabilă
---- de ordinul $10^{-20}$ erori pe secundă pentru flip-flop-urile din
-tehnologia Artix-7.
-
-Valorile inițiale sunt '1' deoarece linia UART este inactivă la nivel logic
-înalt (\textit{idle high}).
-
-\subsection{Mașina de stări}
-
-Receptorul UART utilizează o mașină de stări cu 4 stări:
-
-\begin{enumerate}
-	\item \textbf{S\_IDLE} --- Stare de așteptare. Monitorizează linia
-	      \texttt{rx\_sync2} pentru detectarea frontului descrescător care
-	      marchează începutul bitului de start.
-	\item \textbf{S\_START} --- Verificarea bitului de start. Numărătorul de
-	      ceas (\texttt{clk\_count}) avansează până la \texttt{HALF\_BIT} (433),
-	      moment în care se verifică dacă linia este încă '0'. Dacă da,
-	      tranziția a fost legitimă și se trece la recepția datelor; dacă nu,
-	      a fost un impuls parazit (\textit{glitch}) și se revine la S\_IDLE.
-	\item \textbf{S\_DATA} --- Recepția celor 8 biți de date. La fiecare
-	      \texttt{CLKS\_PER\_BIT} (867) cicluri, valoarea de pe linie este
-	      memorată în registrul de deplasare la poziția indicată de
-	      \texttt{bit\_idx}. Biții sunt recepționați LSB first, conform
-	      standardului UART. După bitul 7, se trece la S\_STOP.
-	\item \textbf{S\_STOP} --- Așteptarea bitului de stop. Se așteaptă
-	      \texttt{CLKS\_PER\_BIT} cicluri, timp în care linia trebuie să fie
-	      la nivel logic '1'. La finalul perioadei, \texttt{rx\_valid} este
-	      activat pentru un ciclu de ceas, iar \texttt{rx\_data} conține
-	      octetul recepționat complet.
-\end{enumerate}
-
-Durata totală de recepție a unui octet este: 1~bit~start + 8~biți~date +
-1~bit~stop = 10~biți $\times$ 868~cicluri = 8\,680~cicluri $\approx$
-86,8\,$\mu$s, corespunzând exact unui caracter la 115\,200~baud.
-
-%==========================================================================
-\section{Modulul \texttt{uart\_tx} --- Transmisia UART}
-\label{sec:uart-tx}
-
-Modulul \texttt{uart\_tx} este echivalentul simetric al receptorului, realizând
-transmisia serială la 115\,200~baud. La activarea semnalului \texttt{tx\_start},
-octetul prezent pe portul \texttt{tx\_data} este salvat în registrul intern
-\texttt{data\_reg}, iar transmisia începe.
-
-\subsection{Mașina de stări}
-
-Transmițătorul utilizează aceleași 4 stări ca receptorul:
-
-\begin{enumerate}
-	\item \textbf{S\_IDLE} --- Linia de transmisie este menținută la '1' (idle).
-	      La detectarea semnalului \texttt{tx\_start}, octetul este salvat și
-	      transmisia începe.
-	\item \textbf{S\_START} --- Linia este forțată la '0' pentru durata unui bit
-	      complet (868~cicluri de ceas), semnalizând receptorului începutul unui
-	      caracter.
-	\item \textbf{S\_DATA} --- Cei 8~biți de date sunt transmiși secvențial,
-	      câte un bit la fiecare 868~cicluri, începând cu bitul cel mai puțin
-	      semnificativ (LSB first). Semnalul \texttt{tx\_serial} ia valoarea
-	      bitului curent din \texttt{data\_reg(bit\_idx)}.
-	\item \textbf{S\_STOP} --- Linia revine la '1' pentru durata unui bit,
-	      marcând bitul de stop. La final, mașina de stări revine la S\_IDLE.
-\end{enumerate}
-
-Semnalul \texttt{tx\_busy} indică faptul că transmițătorul este ocupat
-(orice stare diferită de S\_IDLE). Modulele din amonte (în particular
-\texttt{frame\_tx}) verifică acest semnal înainte de a iniția o nouă
-transmisie, prevenind suprapunerea caracterelor.
-
-Spre deosebire de receptor, transmițătorul nu necesită protecție contra
-metastabilității, deoarece atât datele de intrare cât și semnalul de ieșire
-se află în același domeniu de ceas de 100\,MHz.
-
-%==========================================================================
-\section{Modulul \texttt{frame\_rx} --- Parserul de cadre}
-\label{sec:frame-rx}
-
-Modulul \texttt{frame\_rx} asamblează cadre de 10~octeți din octeții
-individuali recepționați de \texttt{uart\_rx}. Protocolul de cadre definit
-în Capitolul~\ref{ch:analysis} specifică formatul:
-
-\begin{center}
-\begin{tabular}{|c|c|c|}
-\hline
-Octet 0 & Octeții 1--8 & Octet 9 \\
-\hline
-Direcție (0xFF/0xFE) & 8 unghiuri servo (0--180) & Checksum XOR \\
-\hline
-\end{tabular}
-\end{center}
-
-\subsection{Mașina de stări}
-
-Parserul de cadre utilizează 3~stări:
-
-\begin{enumerate}
-	\item \textbf{S\_WAIT\_DIR} --- Așteaptă un octet de direcție valid
-	      (0xFF pentru scriere unghiuri, 0xFE pentru citire). Orice alt octet
-	      este ignorat, oferind o resincronizare naturală a protocolului.
-	      La primirea unui octet valid, acesta este salvat în \texttt{dir\_reg}
-	      și este inițializat acumulatorul XOR (\texttt{xor\_acc}) cu valoarea
-	      direcției.
-
-	\item \textbf{S\_RECV\_DATA} --- Colectează 8~octeți de date (unghiurile
-	      servomotoarelor). Fiecare octet recepționat este stocat în registrul
-	      \texttt{angles\_reg} la poziția corespunzătoare și este acumulat în
-	      \texttt{xor\_acc} prin operația XOR. Numărătorul \texttt{byte\_count}
-	      urmărește câți octeți au fost primiți. După al 8-lea octet, se trece
-	      la S\_RECV\_CHKSUM.
-
-	\item \textbf{S\_RECV\_CHKSUM} --- Recepționează octetul de checksum.
-	      Verificarea se face prin calculul
-	      $\texttt{xor\_acc} \oplus \texttt{rx\_data}$: dacă rezultatul este
-	      0x00, cadrul este valid și semnalul \texttt{frame\_valid} este activat
-	      pentru un ciclu de ceas; în caz contrar, \texttt{checksum\_err} este
-	      activat. În ambele cazuri, mașina revine la S\_WAIT\_DIR.
-\end{enumerate}
-
-\subsection{Mecanismul de timeout}
-
-Dacă un cadru nu este completat în 1\,ms (100\,000~cicluri de ceas), modulul
-revine automat la starea S\_WAIT\_DIR. Acest mecanism previne blocarea în
-cazul pierderii de octeți pe linia serială. Numărătorul de timeout
-(\texttt{timeout\_cnt}) pe 17~biți se incrementează în fiecare ciclu de ceas
-când starea nu este S\_WAIT\_DIR și se resetează la zero la fiecare octet
-recepționat valid. Valoarea pragului este
-\texttt{TIMEOUT\_MAX} = 99\,999 ($\approx$ 1\,ms la 100\,MHz).
-
-\subsection{Principiul verificării XOR}
-
-Emițătorul calculează checksum-ul ca $\bigoplus_{i=0}^{8} b_i$ (XOR-ul tuturor
-octeților de la 0 la 8) și îl plasează în octetul 9. Receptorul acumulează
-XOR-ul tuturor celor 10~octeți: dacă niciun bit nu a fost alterat în
-transmisie, rezultatul este $\bigoplus_{i=0}^{9} b_i = \bigoplus_{i=0}^{8} b_i
-\oplus b_9 = x \oplus x = 0$. Orice bit inversat în tranzit produce un
-rezultat nenul, iar cadrul este rejectat.
-
-%==========================================================================
-\section{Modulul \texttt{frame\_tx} --- Transmisia cadrelor de răspuns}
-\label{sec:frame-tx}
-
-Modulul \texttt{frame\_tx} serializează un cadru de răspuns atunci când
-calculatorul gazdă trimite un cadru cu direcția 0xFE (cerere de citire).
-Răspunsul conține cele 8~unghiuri filtrate curent, precedate de octetul de
-direcție 0xFE și urmate de checksum-ul XOR.
-
-\subsection{Mașina de stări}
-
-Transmisia se desfășoară în 7~stări, grupate în 3~faze:
-
-\begin{enumerate}
-	\item \textbf{S\_IDLE} --- Așteaptă activarea semnalului \texttt{send\_start}.
-	      La activare, unghiurile sunt salvate în \texttt{angles\_reg}.
-
-	\item \textbf{S\_SEND\_DIR / S\_WAIT\_DIR} --- Transmite octetul de
-	      direcție 0xFE prin \texttt{uart\_tx}. Inițializează acumulatorul XOR
-	      cu 0xFE. Așteaptă ca \texttt{tx\_busy} să devină '0' înainte de a
-	      continua.
-
-	\item \textbf{S\_SEND\_DATA / S\_WAIT\_DATA} --- Transmite secvențial cei
-	      8~octeți de unghiuri, acumulând checksum-ul XOR. Indexul
-	      \texttt{byte\_idx} contorizează octeții transmiși, de la 0 la 7.
-
-	\item \textbf{S\_SEND\_CHKSUM / S\_WAIT\_CHKSUM} --- Transmite octetul de
-	      checksum (\texttt{xor\_acc}) și revine la S\_IDLE.
-\end{enumerate}
-
-Semnalul \texttt{frame\_busy} indică faptul că transmisia unui cadru este
-în curs. Modulul de nivel superior verifică acest semnal pentru a preveni
-inițierea simultană a mai multor cadre de răspuns.
-
-Între fiecare octet transmis, modulul verifică semnalul \texttt{tx\_busy}
-de la \texttt{uart\_tx} pentru a se asigura că transmițătorul serial a
-terminat de trimis octetul precedent. La 115\,200~baud, transmisia unui
-octet complet (10~biți) durează aproximativ 86,8\,$\mu$s, iar un cadru
-complet de 10~octeți durează aproximativ 868\,$\mu$s.
-
-%==========================================================================
-\section{Modulul \texttt{mailbox} --- Buffer dublu}
-\label{sec:mailbox}
-
-Modulul \texttt{mailbox} implementează un mecanism de decuplare temporală
-între rata de sosire a cadrelor UART (variabilă, dependentă de procesarea
-MediaPipe pe calculatorul gazdă) și ciclul fix de 20\,ms al servomotoarelor.
-
-\subsection{Principiul ping-pong}
-
-Modulul conține două registre de 64~de biți:
-
-\begin{itemize}
-	\item \texttt{buf\_write} --- registrul de scriere, actualizat oricând
-	      sosește un cadru UART valid.
-	\item \texttt{buf\_read} --- registrul de citire, actualizat exclusiv pe
-	      frontul semnalului \texttt{tick\_20ms}.
-\end{itemize}
-
-Un semnal de stare \texttt{new\_pending} indică dacă un cadru nou a fost
-depus de la ultimul tick de 20\,ms. La fiecare tick, dacă
-\texttt{new\_pending} este activ, conținutul \texttt{buf\_write} este copiat
-în \texttt{buf\_read}, iar \texttt{new\_pending} este resetat. Ieșirea
-\texttt{rd\_new} pulsează pentru un ciclu de ceas la fiecare actualizare.
-
-Acest mecanism oferă două garanții importante:
-
-\begin{enumerate}
-	\item \textbf{Menținerea poziției:} Dacă niciun cadru nou nu sosește
-	      într-un ciclu de 20\,ms, servomotoarele mențin ultima poziție
-	      comandată. Mâna robotică rămâne stabilă chiar dacă comunicarea
-	      UART este temporar întreruptă.
-	\item \textbf{Rata de eșantionare:} Dacă mai multe cadre UART sosesc
-	      în același interval de 20\,ms, doar ultimul este utilizat. Aceasta
-	      este corectă deoarece doar cel mai recent unghi comandat este
-	      relevant pentru ciclul curent.
-\end{enumerate}
-
-Condiția de scriere a mailbox-ului în modulul de nivel superior este:
-\texttt{mb\_wr\_valid <= frame\_valid and (not frame\_chksum\_err)}, asigurând
-că doar cadrele cu checksum valid sunt acceptate.
-
-%==========================================================================
-\section{Modulul \texttt{source\_mux} --- Multiplexor de surse}
-\label{sec:source-mux}
-
-Modulul \texttt{source\_mux} este un multiplexor pur combinațional care
-selectează sursa unghiurilor țintă pentru filtrul Kalman:
-
-\begin{lstlisting}[caption={Implementarea multiplexorului de surse},label={lst:source-mux}]
-target_angles <= demo_angles when demo_mode = '1'
-                 else mailbox_angles;
-\end{lstlisting}
-
-Când comutatorul \texttt{sw0} de pe placa Basys3 este în poziția ON
-(\texttt{demo\_mode = '1'}), unghiurile provin din modulul \texttt{demo\_rom}.
-În caz contrar, unghiurile provin din \texttt{mailbox}, deci din cadrele
-UART recepționate de la calculatorul gazdă.
-
-Logica este pur combinațională, fără registre, producând o latență de
-propagare de ordinul nanosecundelor. Această decizie de proiectare este
-adecvată deoarece semnalul \texttt{sw0} se modifică rar (doar la acțiunea
-manuală a utilizatorului) și nu necesită filtrare de debounce --- un
-comutator basculant nu prezintă fenomenul de bouncing, spre deosebire de
-un buton.
-
-%==========================================================================
-\section{Modulul \texttt{demo\_rom} --- Secvențe demonstrative}
-\label{sec:demo-rom}
-
-Modulul \texttt{demo\_rom} conține o memorie ROM cu 21~de cadre-cheie
-(\textit{keyframes}) care definesc secvențe de mișcare predefinite ale mâinii
-robotice. Fiecare cadru-cheie conține 8~unghiuri (câte un octet per servo,
-totalul de 64~biți) și o durată de menținere exprimată în tick-uri de 20\,ms.
-
-\subsection{Formatul cadru-cheie}
-
-Fiecare intrare în ROM este definită ca un \texttt{record} VHDL:
-
-\begin{lstlisting}[caption={Tipul record pentru un cadru-cheie din ROM},label={lst:keyframe}]
-type keyframe_t is record
-    angles : std_logic_vector(63 downto 0);
-    hold   : unsigned(7 downto 0);
-end record;
-\end{lstlisting}
-
-Câmpul \texttt{hold} specifică numărul de tick-uri de 20\,ms cât se mențin
-unghiurile respective. De exemplu, \texttt{hold = 50} corespunde unei
-durate de $50 \times 20\,\text{ms} = 1\,\text{secundă}$.
-
-\subsection{Secvențele de mișcare}
-
-ROM-ul conține următoarele secvențe, ordonate astfel:
-
-\begin{table}[H]
-\centering
-\caption{Secvențele demonstrative stocate în ROM}
-\label{tab:demo-sequences}
-\begin{tabular}{@{}clc@{}}
-\toprule
-\textbf{Indici} & \textbf{Secvența} & \textbf{Durată} \\
-\midrule
-0--3   & Deschidere/închidere pumn (2$\times$) & 4\,s \\
-4--8   & Fluturare (rotire încheietură stânga/dreapta) & 2,5\,s \\
-9--13  & Flexii individuale degete & 3\,s \\
-14--15 & Gest \textit{thumbs up} & 2,5\,s \\
-16--17 & Gest \textit{pointing} & 2,5\,s \\
-18--20 & Flexia/extensia cotului & 3\,s \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Constanta \texttt{LAST\_KF = 20} definește ultimul cadru-cheie valid.
-La depășirea acestui indice, numărătorul de cadre-cheie \texttt{kf\_index}
-se resetează la zero, creând un ciclu continuu de demonstrație.
-
-\subsection{Logica de avansare}
-
-Un numărător \texttt{hold\_counter} se incrementează la fiecare tick de
-20\,ms. Când atinge valoarea \texttt{hold} a cadrului-cheie curent, indexul
-\texttt{kf\_index} avansează la următorul cadru-cheie și
-\texttt{hold\_counter} se resetează. Dezactivarea intrării \texttt{enable}
-(prin comutatorul \texttt{sw0}) resetează atât indexul cât și numărătorul,
-astfel încât reactivarea pornește secvența de la început.
-
-Ordinea servomotoarelor în vectorul de 64~biți este: degetul mic, degetul
-inelar, degetul mijlociu, degetul arătător, mișcarea palmară a degetului
-mare, tensiunea degetului mare, rotația încheieturii și extensia cotului.
-Convențional, valoarea 0 corespunde poziției complet închise (pentru degete)
-sau complet flexate (pentru cot), iar 180 corespunde poziției complet
-deschise, respectiv extinse.
-
-%==========================================================================
-\section{Modulul \texttt{spi\_master} --- Interfața SPI}
-\label{sec:spi-master}
-
-Modulul \texttt{spi\_master} implementează un master SPI generic care
-operează în modul~3 (CPOL=1, CPHA=1), conform cerințelor ADC-ului AD7124-8.
-
-\subsection{Parametrii SPI mod 3}
-
-În modul~3:
-\begin{itemize}
-	\item SCLK este inactiv la nivel logic '1' (CPOL=1).
-	\item Datele sunt modificate pe frontul descrescător al SCLK
-	      (\textit{falling edge}) și eșantionate pe frontul crescător
-	      (\textit{rising edge}) --- CPHA=1.
-	\item Frecvența SCLK rezultă din divizarea ceasului de sistem:
-	      100\,MHz / 20 = 5\,MHz. Constanta \texttt{CLK\_DIV = 9}
-	      generează o semiperioadă de 10~cicluri (numărare de la 0 la 9),
-	      rezultând o perioadă completă de 20~cicluri de ceas.
-\end{itemize}
-
-\subsection{Mașina de stări}
-
-\begin{enumerate}
-	\item \textbf{S\_IDLE} --- SCLK este menținut la '1'. La activarea
-	      \texttt{start}, octetul de transmis este salvat în
-	      \texttt{shift\_out}, iar bitul MSB este plasat pe linia MOSI.
-	      Semnalul \texttt{cs\_n} este activat la '0'.
-
-	\item \textbf{S\_LEADING\_EDGE} --- Numărătorul de divizare
-	      \texttt{div\_cnt} avansează de la 0 la \texttt{CLK\_DIV} (9).
-	      La atingerea pragului, SCLK comută la '0' (front descrescător),
-	      moment în care receptorul eșantionează MOSI. Se trece la
-	      S\_TRAILING\_EDGE.
-
-	\item \textbf{S\_TRAILING\_EDGE} --- Numărătorul avansează din nou
-	      până la 9. La atingerea pragului, SCLK comută la '1' (front
-	      crescător), moment în care masterul eșantionează MISO. Bitul
-	      recepționat este introdus în \texttt{shift\_in}. Dacă toți
-	      8~biții au fost transferați (\texttt{bit\_cnt = 7}), se trece
-	      la S\_DONE; altfel, se avansează \texttt{bit\_cnt} și se
-	      actualizează MOSI cu următorul bit.
-
-	\item \textbf{S\_DONE} --- Octetul recepționat este copiat pe
-	      \texttt{rx\_data}, semnalul \texttt{done} pulsează, iar mașina
-	      revine la S\_IDLE.
-\end{enumerate}
-
-\subsection{Protecția contra metastabilității pe MISO}
-
-Similar receptorului UART, linia MISO provine dintr-un circuit extern
-(ADC-ul AD7124-8) și este asincronă față de ceasul FPGA. Două flip-flop-uri
-în cascadă (\texttt{miso\_s1}, \texttt{miso\_s2}) sincronizează semnalul
-înainte de eșantionare:
-
-\begin{lstlisting}[caption={Sincronizator pe linia MISO},label={lst:miso-sync}]
-process(clk)
-begin
-    if rising_edge(clk) then
-        miso_s1 <= miso;
-        miso_s2 <= miso_s1;
+Pentru a nu rămâne blocat pe un cadru incomplet, modulul dispune și de un mecanism
+de expirare, care readuce mașina de stări în starea inițială dacă un cadru nu este
+finalizat într-un interval rezonabil.
+
+\subsection{Sincronizarea prin mailbox}
+
+Unul dintre cele mai importante module pentru funcționarea corectă a sistemului este
+\texttt{mailbox}, care rezolvă problema sincronizării dintre recepție și prelucrare.
+Cadrele sosesc prin UART la momente independente de ciclul intern de 20~ms, astfel
+încât o citire directă a datelor de către filtru ar putea surprinde un set de
+unghiuri pe jumătate actualizat. Mecanismul folosește două registre. Datele nou
+primite sunt scrise într-un registru de intrare și marcate printr-un fanion, iar
+copierea lor în registrul din care citește filtrul se face dintr-o singură mișcare,
+doar la începutul ciclului de control.
+
+\needspace{18\baselineskip}
+\begin{lstlisting}[caption={Comutarea datelor în mailbox, sincronizată cu ciclul de 20~ms.},label={lst:mailbox}]
+if wr_valid = '1' then
+    buf_write   <= wr_angles;
+    new_pending <= '1';
+end if;
+
+if tick_20ms = '1' then
+    if new_pending = '1' then
+        buf_read    <= buf_write;
+        new_pending <= '0';
+        rd_new      <= '1';
     end if;
-end process;
+end if;
 \end{lstlisting}
 
-Ordinea de transfer este MSB first (bitul cel mai semnificativ este trimis
-primul), conform convenției AD7124-8.
+În acest fel, filtrul lucrează întotdeauna pe un set de date coerent, în timp ce
+recepția poate continua nestingherită în fundal.
 
-%==========================================================================
-\section{Modulul \texttt{ad7124\_ctrl} --- Controlerul ADC}
-\label{sec:ad7124-ctrl}
+\subsection{Implementarea filtrului Kalman}
 
-Modulul \texttt{ad7124\_ctrl} controlează ADC-ul AD7124-8 pe 24~de biți
-prin intermediul modulului \texttt{spi\_master}. Funcționarea se desfășoară
-în două faze: inițializarea (o singură dată după reset) și citirea ciclică
-continuă.
+Filtrul Kalman constituie nucleul prelucrării și este, totodată, modulul cel mai
+complex din întregul circuit. Modelul matematic, cu cele două stări, poziția și
+viteza, a fost dedus în capitolul de analiză. Aici este prezentat modul în care
+ecuațiile acelui model au fost transpuse în hardware, cu toate adaptările impuse de
+lucrul în aritmetică cu virgulă fixă și de constrângerile de timp ale plăcii.
+Întregul filtru este implementat ca o mașină cu stări care parcurge, pentru fiecare
+dintre cele opt canale, etapele de încărcare a stării, predicție, actualizare și
+stocare a rezultatului, conform diagramei din Figura~\ref{fig:kalman-fsm}.
 
-\subsection{Faza de inițializare}
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.6\textwidth]{figs/kalman_fsm.png}
+	\caption{Mașina cu stări a filtrului Kalman, parcursă pentru fiecare canal.}
+	\label{fig:kalman-fsm}
+\end{figure}
 
-Secvența de inițializare cuprinde următorii pași:
+\subsubsection{Reprezentarea în virgulă fixă}
 
-\begin{enumerate}
-	\item \textbf{Reset hardware:} Se transmit 8~octeți de 0xFF prin SPI.
-	      Conform documentației AD7124-8, transmiterea a cel puțin 64~de biți
-	      consecutivi de '1' resetează registrele interne ale ADC-ului la
-	      valorile implicite.
+Toate mărimile filtrului sunt reprezentate în formatul Q16.16 prezentat în capitolul
+de analiză, adică prin întregi pe 32 de biți obținuți prin înmulțirea valorii reale
+cu $2^{16}$. Constantele filtrului au fost calculate o singură dată și înscrise direct
+în cod sub această formă. Astfel, intervalul de eșantionare $\Delta t = 0{,}02$~s
+devine $0{,}02 \times 65536 \approx 1311$, zgomotul de proces pe poziție
+$Q_{00} = 0{,}01$ devine $655$, zgomotul pe viteză $Q_{11} = 0{,}1$ devine $6554$, iar
+incertitudinea inițială $P_\text{init} = 10$ devine $655360$. Aceste valori se
+regăsesc ca atare printre constantele modulului.
 
-	\item \textbf{Așteptare post-reset:} Un interval de 4\,ms
-	      (400\,000~cicluri de ceas) permite ADC-ului să finalizeze procedura
-	      internă de resetare. Această valoare depășește specificația minimă
-	      din fișa de catalog, asigurând o marjă confortabilă.
+\needspace{18\baselineskip}
+\begin{lstlisting}[caption={Constantele filtrului, în format Q16.16.},label={lst:kalman-const}]
+constant DT_Q16  : signed(31 downto 0) := to_signed(1311, 32);
+constant Q00     : signed(31 downto 0) := to_signed(655, 32);
+constant Q11     : signed(31 downto 0) := to_signed(6554, 32);
+constant R_NOISE : signed(31 downto 0) := to_signed(65536, 32);
+constant P_INIT  : signed(31 downto 0) := to_signed(655360, 32);
+\end{lstlisting}
 
-	\item \textbf{Configurare registre:} Se scriu secvențial 11~registre
-	      de configurare, fiecare consistând dintr-un octet de comandă
-	      (adresa registrului) urmat de 2 sau 3~octeți de date:
-\end{enumerate}
+Înmulțirea a două numere în acest format produce un rezultat scalat cu $2^{32}$, motiv
+pentru care produsul pe 64 de biți trebuie deplasat înapoi cu 16 biți, prin extragerea
+biților de la 16 la 47. Această operație este încapsulată într-o funcție folosită în
+tot restul modulului.
 
-\begin{table}[H]
-\centering
-\caption{Secvența de configurare a registrelor AD7124-8}
-\label{tab:adc-config}
-\begin{tabular}{@{}llp{6.5cm}@{}}
-\toprule
-\textbf{Registru} & \textbf{Valoare} & \textbf{Semnificație} \\
-\midrule
-ADC\_Control (0x01) & 0x0DC0 & Full power, conversie continuă, DATA\_STATUS activat, referință internă \\
-Config\_0 (0x19) & 0x0070 & Unipolar, buffere intrare, referință internă, PGA=1 \\
-Filter\_0 (0x21) & 0x060180 & Filtru sinc3, FS=384, ODR=50\,Hz \\
-Channel 0 (0x09) & 0x8011 & Activat, Setup 0, AINP=0, AINM=AVSS \\
-Channel 1 (0x0A) & 0x8031 & Activat, Setup 0, AINP=1, AINM=AVSS \\
-Channel 2 (0x0B) & 0x8051 & Activat, Setup 0, AINP=2, AINM=AVSS \\
-Channel 3 (0x0C) & 0x8071 & Activat, Setup 0, AINP=3, AINM=AVSS \\
-Channel 4 (0x0D) & 0x8091 & Activat, Setup 0, AINP=4, AINM=AVSS \\
-Channel 5 (0x0E) & 0x80B1 & Activat, Setup 0, AINP=5, AINM=AVSS \\
-Channel 6 (0x0F) & 0x80D1 & Activat, Setup 0, AINP=6, AINM=AVSS \\
-Channel 7 (0x10) & 0x80F1 & Activat, Setup 0, AINP=7, AINM=AVSS \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Rata de ieșire a datelor (ODR) de 50\,Hz corespunde exact ciclului de servo
-de 20\,ms, asigurând că o nouă măsurătoare este disponibilă la fiecare
-actualizare a servomotoarelor.
-
-Toate cele 8~canale sunt configurate în mod \textit{single-ended}, cu
-intrarea negativă conectată la AVSS (masa analogică). Fiecare canal citește
-semnalul de feedback analog de la potențiometrul intern al servomotorului
-MG996R corespunzător.
-
-\subsection{Faza de citire ciclică}
-
-După finalizarea inițializării, modulul intră într-un ciclu continuu de
-citire a registrului de date. Secvența de citire este:
-
-\begin{enumerate}
-	\item Se trimite comanda de citire a registrului de date: 0x42
-	      (RD=1 | adresa registrului de date = 0x02).
-	\item Se recepționează 3~octeți de date (24~biți, valoarea ADC brută)
-	      și 1~octet de status (care conține, în biții 3:0, numărul
-	      canalului de pe care provine conversiunea).
-	\item Se extrage numărul canalului din octetul de status și se efectuează
-	      conversia în unghi:
-\end{enumerate}
-
-\begin{equation}
-\text{angle} = \frac{\text{adc\_raw} \times 180}{2^{24}}
-\label{eq:adc-to-angle}
-\end{equation}
-
-Implementarea în VHDL utilizează înmulțirea cu 180 urmată de deplasare la
-dreapta cu 24~de biți (echivalent cu împărțirea la $2^{24}$). Aceasta
-mapează domeniul complet al ADC-ului (0x000000 -- 0xFFFFFF) la intervalul
-0°--180°.
-
-Un registru de 8~biți \texttt{channels\_read} urmărește care canale au
-fost citite. Când toate cele 8~bituri sunt setate (0xFF), modulul emite
-semnalul \texttt{meas\_valid} și furnizează toți cei 8~unghiuri măsurați
-pe portul \texttt{meas\_angles}, apoi resetează registrul pentru un nou
-ciclu de citire.
-
-Semnalul \texttt{config\_done} este conectat la LED-ul 0 de pe placa Basys3,
-oferind o indicație vizuală că inițializarea ADC-ului s-a finalizat cu succes.
-
-%==========================================================================
-\section{Modulul \texttt{kalman\_engine} --- Filtrul Kalman}
-\label{sec:kalman-engine}
-
-Modulul \texttt{kalman\_engine} implementează nucleul algoritmului de filtrare
-Kalman cu 2~stări (poziție și viteză) în aritmetică virgulă fixă Q16.16,
-multiplexat în timp pe cele 8~canale de servo. Acesta este modulul central al
-proiectului, responsabil pentru stabilizarea mișcărilor mâinii robotice prin
-estimarea optimă a traiectoriei pe baza măsurătorilor zgomotoase.
-
-\subsection{Constantele de configurare}
-
-Tabelul~\ref{tab:kalman-constants} prezintă constantele utilizate de filtru,
-cu valorile în reprezentare Q16.16 și echivalentele reale.
-
-\begin{table}[H]
-\centering
-\caption{Constantele filtrului Kalman în reprezentare Q16.16}
-\label{tab:kalman-constants}
-\begin{tabular}{@{}lrll@{}}
-\toprule
-\textbf{Constantă} & \textbf{Valoare Q16.16} & \textbf{Valoare reală} & \textbf{Semnificație} \\
-\midrule
-ONE\_Q16 & 65\,536   & 1,0          & Reprezentarea unității \\
-DT\_Q16  & 1\,311    & 0,02\,s      & Perioada de actualizare (20\,ms) \\
-Q00      & 655       & 0,01\,grad$^2$ & Zgomot de proces --- poziție \\
-Q11      & 6\,554    & 0,1\,(grad/s)$^2$ & Zgomot de proces --- viteză \\
-R\_NOISE & 65\,536   & 1,0\,grad$^2$ & Zgomot de măsurare \\
-P\_INIT  & 655\,360  & 10,0         & Incertitudine inițială \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Valorile Q00 și Q11 definesc cât de mult \textit{distrust-ăm} predicția
-(valori mai mari = predicție mai nesigură, filtru mai receptiv). R\_NOISE
-definește cât de mult \textit{distrust-ăm} măsurătoarea ADC (valori mai
-mari = măsurătoare mai zgomotoasă, filtru mai lin). Aceste constante
-pot fi ajustate în funcție de comportamentul observat pe hardware-ul real.
-
-\subsection{Memoria de stare (State RAM)}
-
-Starea filtrului Kalman pentru cele 8~canale este stocată într-o memorie RAM
-internă de $8 \times 5 = 40$ cuvinte de câte 32~de biți:
-
-\begin{table}[H]
-\centering
-\caption{Structura memoriei de stare pentru un canal}
-\label{tab:state-ram}
-\begin{tabular}{@{}clp{8cm}@{}}
-\toprule
-\textbf{Offset} & \textbf{Variabilă} & \textbf{Descriere} \\
-\midrule
-+0 & $x_0$ & Poziția estimată (grade, Q16.16) \\
-+1 & $x_1$ & Viteza estimată (grade/secundă, Q16.16) \\
-+2 & $P_{00}$ & Incertitudinea poziției \\
-+3 & $P_{01}$ & Corelația poziție-viteză \\
-+4 & $P_{11}$ & Incertitudinea vitezei \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Adresa de bază pentru canalul $k$ este $5k$, iar funcția \texttt{ch\_base}
-calculează această adresă. La inițializare, $x_0$ și $x_1$ sunt setate la
-zero, iar $P_{00}$ și $P_{11}$ sunt setate la P\_INIT = 10,0 (incertitudine
-inițială mare, semnificând că filtrul nu are încă informații despre poziția
-reală a servomotoarelor).
-
-\subsection{Funcția de multiplicare Q16.16}
-
-Multiplicarea a două numere Q16.16 produce un rezultat pe 64~de biți cu
-32~de biți fracționari. Pentru a reveni la formatul Q16.16 (16~biți
-fracționari), se extrag biții 47:16 din produsul complet:
-
-\begin{lstlisting}[caption={Funcția de multiplicare în virgulă fixă Q16.16},label={lst:mul-q16}]
-function mul_q16(a : signed(31 downto 0);
-                 b : signed(31 downto 0))
+\needspace{18\baselineskip}
+\begin{lstlisting}[caption={Funcția de înmulțire în virgulă fixă Q16.16.},label={lst:mulq16}]
+function mul_q16(a : signed(31 downto 0); b : signed(31 downto 0))
     return signed is
     variable product : signed(63 downto 0);
 begin
@@ -732,395 +566,161 @@ begin
 end function;
 \end{lstlisting}
 
-Această operație este echivalentă matematic cu $(a \times b) \gg 16$,
-menținând precizia fracționară fără a necesita unitate de virgulă mobilă.
-Sintetizatorul Vivado mapează aceste multiplicări pe blocurile DSP48E1
-disponibile în Artix-7, eliminând necesitatea implementării cu logică
-combinațională.
+\subsubsection{Etapa de predicție}
 
-\subsection{Mașina de stări a filtrului Kalman}
-\label{subsec:kalman-fsm}
+În etapa de predicție, poziția este avansată cu termenul corespunzător vitezei, iar
+matricea de covarianță este propagată conform ecuațiilor deduse în capitolul de
+analiză. Predicția covarianței,
+%
+\begin{align*}
+P_{00}^{-} &= P_{00} + 2\,\Delta t\,P_{01} + \Delta t^2\,P_{11} + Q_{00}, \\
+P_{01}^{-} &= P_{01} + \Delta t\,P_{11}, \\
+P_{11}^{-} &= P_{11} + Q_{11},
+\end{align*}
+%
+nu poate fi calculată dintr-o singură expresie, deoarece ar conține mai multe
+înmulțiri înlănțuite, ceea ce ar crea o cale combinațională prea lungă. De aceea, ea
+este descompusă pe mai multe stări, fiecare efectuând cel mult o înmulțire. Mai întâi
+se pre-calculează produsele $\Delta t \cdot P_{01}$ și $\Delta t \cdot P_{11}$, iar
+apoi acestea sunt combinate prin adunări succesive, după cum se vede în fragmentul de
+mai jos, unde \texttt{dt\_p01} și \texttt{dt\_p11} sunt produsele pre-calculate.
 
-Filtrul procesează secvențial cele 8~canale de servo, executând pentru
-fiecare canal un ciclu complet de predicție și actualizare. Mașina de
-stări cuprinde 15~stări, grupate funcțional:
+\needspace{18\baselineskip}
+\begin{lstlisting}[caption={Predicția covarianței, descompusă pe stări.},label={lst:predict-p}]
+when S_PREDICT_DT =>
+    dt_p01 <= mul_q16(DT_Q16, p01);
+    dt_p11 <= mul_q16(DT_Q16, p11);
+    fsm    <= S_PREDICT_P00A;
 
-\subsubsection{Inițializare (S\_INIT\_RAM)}
-
-La pornire sau după reset, se parcurge memoria de stare de la adresa 0 la
-39, inițializând fiecare cuvânt conform structurii din
-Tabelul~\ref{tab:state-ram}. Pozițiile de offset 2 și 4 (P$_{00}$ și
-P$_{11}$) primesc valoarea P\_INIT, iar celelalte sunt inițializate la zero.
-După finalizare, semnalul \texttt{initialized} este activat și mașina trece
-la S\_IDLE.
-
-\subsubsection{Încărcare (S\_LOAD)}
-
-Se citesc cele 5~variabile de stare ale canalului curent din RAM și se
-convertește unghiul măsurat din format pe 8~biți în Q16.16 (multiplicare
-cu 65\,536). Funcția \texttt{get\_angle\_q16} extrage octetul corespunzător
-canalului curent din vectorul de 64~biți al măsurătorilor.
-
-\subsubsection{Predicție (S\_PREDICT\_X, S\_PREDICT\_P00, P01, P11)}
-
-Se aplică ecuațiile de predicție ale filtrului Kalman:
-
-\begin{align}
-x_{0,\text{pred}} &= x_0 + dt \cdot x_1 \label{eq:predict-x0} \\
-x_{1,\text{pred}} &= x_1 \label{eq:predict-x1}
-\end{align}
-
-Viteza nu se modifică în predicție deoarece modelul cu 2~stări nu include
-accelerația. Predicția covarinaței crește incertitudinea:
-
-\begin{align}
-P_{00}' &= P_{00} + 2 \cdot dt \cdot P_{01} + dt^2 \cdot P_{11} + Q_{00}
-\label{eq:predict-p00} \\
-P_{01}' &= P_{01} + dt \cdot P_{11} \label{eq:predict-p01} \\
-P_{11}' &= P_{11} + Q_{11} \label{eq:predict-p11}
-\end{align}
-
-Implementarea VHDL a predicției P$_{00}$ utilizează funcția \texttt{mul\_q16}
-pentru toate produsele:
-
-\begin{lstlisting}[caption={Predicția covarianței P00 în VHDL},label={lst:predict-p00}]
-when S_PREDICT_P00 =>
-    pp00 <= p00 + mul_q16(DT_Q16, p01) +
-            mul_q16(DT_Q16, p01) +
-            mul_q16(DT_Q16, mul_q16(DT_Q16, p11)) + Q00;
-    fsm <= S_PREDICT_P01;
+when S_PREDICT_P00A =>
+    pp00 <= p00 + dt_p01 + dt_p01;   -- p00 + 2*dt*p01
+    pp01 <= p01 + dt_p11;            -- p01 + dt*p11
+    fsm  <= S_PREDICT_P00B;
 \end{lstlisting}
 
-\subsubsection{Actualizare (S\_UPDATE\_S, K0, K1, X, P)}
+\subsubsection{Etapa de actualizare}
 
-Inovația (\textit{innovation}) reprezintă diferența dintre măsurătoarea
-reală și predicție:
+În etapa de actualizare se calculează mai întâi inovația, adică diferența dintre
+poziția măsurată și cea prezisă, $y = z - \hat{x}_0^{-}$, și covarianța inovației
+$S = P_{00}^{-} + R$. Câștigul Kalman se obține apoi prin cele două împărțiri
+$K_0 = P_{00}^{-}/S$ și $K_1 = P_{01}^{-}/S$, realizate cu modulul de împărțire
+descris în continuare. Starea este în final corectată proporțional cu inovația,
+%
+\begin{equation*}
+\hat{x}_0 = \hat{x}_0^{-} + K_0\,y, \qquad \hat{x}_1 = \hat{x}_1^{-} + K_1\,y,
+\end{equation*}
+%
+fiecare dintre aceste corecții fiind descompusă, la rândul ei, într-un pas de
+înmulțire și unul de adunare, pentru a respecta disciplina unei singure înmulțiri pe
+ciclu de ceas.
 
-\begin{equation}
-y = z_{\text{meas}} - x_{0,\text{pred}}
-\label{eq:innovation}
-\end{equation}
+\needspace{18\baselineskip}
+\begin{lstlisting}[caption={Corecția poziției, separată în înmulțire și adunare.},label={lst:kalman-update}]
+when S_UPDATE_X0A =>
+    mul_res <= mul_q16(k0, y_innov);   -- K0 * y
+    fsm     <= S_UPDATE_X0B;
 
-Covarianța inovației combină incertitudinea predicției cu zgomotul de
-măsurare:
-
-\begin{equation}
-S = P_{00}' + R
-\label{eq:innovation-cov}
-\end{equation}
-
-Câștigul Kalman determină ponderea acordată măsurătorii vs. predicției:
-
-\begin{align}
-K_0 &= P_{00}' / S \label{eq:kalman-k0} \\
-K_1 &= P_{01}' / S \label{eq:kalman-k1}
-\end{align}
-
-Dacă incertitudinea predicției ($P_{00}'$) este mare comparativ cu zgomotul
-de măsurare ($R$), câștigul se apropie de 1,0 --- filtrul încredințează
-mai mult măsurătorii. Dacă $P_{00}'$ este mic, câștigul se apropie de 0 ---
-filtrul încredințează mai mult predicția.
-
-Implementarea diviziunii în VHDL utilizează operatorul \texttt{/}
-aplicat pe valori extinse la 64~de biți, cu deplasare la stânga prealabilă
-a numărătorului cu 16~biți pentru a menține precizia Q16.16:
-
-\begin{lstlisting}[caption={Calculul câștigului Kalman K0 cu protecție împotriva împărțirii la zero},label={lst:kalman-k0}]
-when S_UPDATE_K0 =>
-    if s_val /= 0 then
-        tmp64 := shift_left(resize(pp00, 64), 16);
-        k0 <= resize(tmp64 / resize(s_val, 64), 32);
-    else
-        k0 <= ONE_Q16;
-    end if;
+when S_UPDATE_X0B =>
+    x0  <= x0_pred + mul_res;          -- x0_pred + K0*y
+    fsm <= S_CLAMP_X0;
 \end{lstlisting}
 
-Protecția împotriva împărțirii la zero setează $K_0 = 1,0$ în cazul extrem
-în care $S = 0$, ceea ce ar însemna încredere totală în măsurătoare.
+\subsubsection{Stocarea stării și mecanisme de protecție}
 
-Corecția stării:
+O decizie de proiectare importantă privește modul de stocare a stării celor opt
+canale. Fiecare canal are nevoie de cinci valori, poziția, viteza și cele trei
+elemente ale matricei de covarianță. În loc de a folosi o singură memorie comună,
+care ar fi impus un multiplexor mare și greu de încadrat în timp, starea a fost
+distribuită în cinci memorii separate, câte una pentru fiecare mărime, fiecare cu
+opt locații. Această separare simplifică accesul și ușurează respectarea
+constrângerilor de timp, aspect detaliat în secțiunea dedicată închiderii temporale.
 
-\begin{align}
-x_0 &= x_{0,\text{pred}} + K_0 \cdot y \label{eq:update-x0} \\
-x_1 &= x_{1,\text{pred}} + K_1 \cdot y \label{eq:update-x1}
-\end{align}
+Filtrul conține și un mecanism de protecție împotriva valorilor aberante. Atunci când
+inovația depășește în modul un prag stabilit, echivalentul a 30 de grade, filtrul
+abandonează corecția obișnuită și reinițializează starea canalului respectiv,
+considerând că o asemenea diferență provine dintr-o citire eronată și nu dintr-o
+mișcare reală. De asemenea, poziția estimată este limitată la intervalul de 0 până la
+180 de grade, iar viteza la o valoare maximă rezonabilă, pentru a preveni acumularea
+unor valori nefirești în urma unor perturbații.
 
-Ecuația~\eqref{eq:update-x1} este mecanismul prin care viteza \textit{învață}:
-dacă măsurătoarea arată constant că servomotorul s-a deplasat mai mult decât
-a prezis predicția, inovația $y$ este pozitivă, iar $K_1 \cdot y$ crește
-estimarea vitezei. Reciproc, dacă servomotorul este în repaus, inovația
-scade, iar viteza converge spre zero.
+\subsection{Împărțitorul în virgulă fixă}
 
-Actualizarea covarianței (incertitudinea scade după integrarea măsurătorii):
+Calculul câștigului Kalman presupune două împărțiri pentru fiecare canal, iar
+împărțirea este operația cea mai costisitoare din întregul algoritm. O realizare
+directă a ei ar fi creat o cale combinațională mult prea lungă pentru a se încadra
+într-o perioadă de ceas de 10~ns. Din acest motiv, împărțirea a fost implementată
+într-un modul separat, \texttt{divider}, care folosește un algoritm secvențial cu
+refacere, producând câte un bit de rezultat pe ciclu de ceas. Operația se desfășoară
+astfel pe parcursul mai multor cicluri, fiecare cu o cale combinațională scurtă, ceea
+ce permite circuitului să funcționeze la frecvența dorită. Filtrul Kalman pornește
+împărțirea și așteaptă semnalul de finalizare înainte de a folosi rezultatul.
 
-\begin{align}
-P_{00} &= (1 - K_0) \cdot P_{00}' \label{eq:update-p00} \\
-P_{01} &= (1 - K_0) \cdot P_{01}' \label{eq:update-p01} \\
-P_{11} &= -K_1 \cdot P_{01}' + P_{11}' \label{eq:update-p11}
-\end{align}
+\subsection{Generarea semnalelor PWM}
 
-\subsubsection{Stocare și avansare (S\_STORE, S\_NEXT\_CH, S\_OUTPUT)}
+Pentru fiecare dintre cele opt canale, un modul \texttt{pwm\_gen} transformă unghiul
+filtrat într-un semnal cu durata impulsului corespunzătoare. Modulul folosește un
+numărător care parcurge ciclic valorile de la 0 la 1.999.999, corespunzând perioadei
+de 20~ms, și menține ieșirea la nivel ridicat atâta timp cât numărătorul este sub un
+prag calculat din unghi. La frecvența de 100~MHz, impulsul minim de 1~ms corespunde la
+100.000 de perioade de ceas, iar fiecare grad adaugă încă $100000/180 \approx 556$ de
+perioade, astfel încât pragul se calculează ca
+%
+\begin{equation*}
+\text{prag}(\alpha) = 100000 + \alpha \times 556,
+\end{equation*}
+%
+relație transpusă direct în cod prin expresia de mai jos.
 
-Cele 5~variabile de stare actualizate sunt scrise înapoi în RAM la adresa
-de bază a canalului curent. Poziția estimată ($x_0$) este convertită de la
-Q16.16 la un unghi pe 8~biți prin deplasare la dreapta cu 16~biți, urmată
-de limitare la intervalul 0--180:
-
-\begin{lstlisting}[caption={Conversia Q16.16 la unghi pe 8 biți cu limitare},label={lst:angle-clamp}]
-result_angle := to_integer(shift_right(x0, 16));
-if result_angle < 0 then
-    result_angle := 0;
-elsif result_angle > 180 then
-    result_angle := 180;
-end if;
+\needspace{18\baselineskip}
+\begin{lstlisting}[caption={Calculul pragului de comparație din unghi.},label={lst:pwm-thr}]
+threshold <= to_unsigned(100000, 21) +
+             resize(unsigned(angle) * to_unsigned(556, 10), 21);
 \end{lstlisting}
 
-După procesarea tuturor celor 8~canale ($\texttt{channel} = 0, 1, \ldots, 7$),
-starea S\_OUTPUT transferă toți unghiurile filtrate pe portul
-\texttt{output\_angles} și activează semnalul \texttt{output\_valid}
-pentru un ciclu de ceas. Mașina revine apoi la S\_IDLE, așteptând
-următorul tick de 20\,ms.
+Cele opt instanțe funcționează independent și în paralel, astfel încât actualizarea
+unui canal nu le afectează pe celelalte.
 
-\subsection{Buget temporal}
+Un caz aparte îl constituie canalul corespunzător mișcării palmare a degetului mare.
+Acest servomotor este montat în sens invers față de celelalte, din cauza
+constrângerilor mecanice de amplasare, și are nevoie de o cursă redusă, între 90 și 0
+grade, în care valoarea mică deschide articulația, iar cea mare o închide. Pentru a
+respecta acest comportament fără a modifica restul logicii, comanda acestui canal este
+remapată separat înainte de a ajunge la generatorul PWM. Unghiul primit este redus la
+jumătate și scăzut din 90, astfel încât o comandă de 0 grade produce o ieșire de 90 de
+grade, iar una de 180 de grade produce o ieșire de 0 grade.
 
-Fiecare canal necesită aproximativ 14~multiplicări, 2~diviziuni și 14~adunări,
-totalizând circa 182~cicluri de ceas. Procesarea tuturor celor 8~canale
-necesită aproximativ $8 \times 182 = 1\,456$ cicluri din cele 2\,000\,000
-disponibile între două tick-uri de 20\,ms, reprezentând un grad de utilizare
-de doar 0,07\%. Aceasta lasă un buget de ceas generos pentru eventuale
-extinderi viitoare, cum ar fi trecerea la un filtru Kalman cu 3~stări.
-
-%==========================================================================
-\section{Modulul \texttt{pwm\_gen} --- Generatorul PWM}
-\label{sec:pwm-gen}
-
-Modulul \texttt{pwm\_gen} generează un semnal PWM standard pentru un
-servomotor. Standardul servo definește:
-
-\begin{itemize}
-	\item Perioadă: 20\,ms (50\,Hz)
-	\item Puls de 1,0\,ms $\rightarrow$ 0° (poziție minimă)
-	\item Puls de 2,0\,ms $\rightarrow$ 180° (poziție maximă)
-\end{itemize}
-
-La frecvența de ceas de 100\,MHz:
-\begin{itemize}
-	\item 1,0\,ms = 100\,000 de cicluri
-	\item 2,0\,ms = 200\,000 de cicluri
-	\item Intervalul util = 100\,000 de cicluri pentru 180°
-	\item Factor de conversie: $100\,000 / 180 \approx 556$
-\end{itemize}
-
-Pragul PWM se calculează ca:
-
-\begin{equation}
-\text{threshold} = 100\,000 + \text{angle} \times 556
-\label{eq:pwm-threshold}
-\end{equation}
-
-Ieșirea PWM este '1' cât timp numărătorul intern (pe 21~de biți, numărând de
-la 0 la 1\,999\,999) este mai mic decât pragul, și '0' în rest. Acest
-principiu de comparație este implementat printr-o singură instrucțiune
-combinațională:
-
-\begin{lstlisting}[caption={Generarea semnalului PWM prin comparație},label={lst:pwm-compare}]
-pwm_out <= '1' when counter < threshold else '0';
+\needspace{18\baselineskip}
+\begin{lstlisting}[caption={Remaparea canalului degetului mare, inversat și scalat.},label={lst:remap}]
+pwm_angles(31 downto 24) <=
+    std_logic_vector(to_unsigned(90, 8) -
+                     shift_right(unsigned(kalman_out(31 downto 24)), 1));
 \end{lstlisting}
 
-\subsection{Generarea a 8 instanțe}
+\subsection{Interfața cu convertorul analog-digital}
 
-În modulul de nivel superior \texttt{basys3\_top}, se generează 8~instanțe
-ale modulului \texttt{pwm\_gen} prin intermediul instrucțiunii
-\texttt{for...generate}:
+Citirea poziției reale a servomotoarelor este gestionată de modulul
+\texttt{ad7124\_ctrl}, în colaborare cu modulul generic \texttt{spi\_master}. La
+pornire, controlerul parcurge o secvență de inițializare prin care configurează
+registrele convertorului, stabilind modul de conversie continuă, filtrul digital și
+ordinea canalelor. Ulterior, citește ciclic valorile măsurate, folosind un mod în
+care fiecare conversie este însoțită de identificatorul canalului căruia îi aparține,
+ceea ce simplifică asocierea măsurătorilor cu articulațiile. Valoarea brută pe 24 de
+biți este apoi convertită într-un unghi, prin scalarea la intervalul de 0 până la 180
+de grade.
 
-\begin{lstlisting}[caption={Generarea a 8 instanțe PWM prin instrucțiunea generate},label={lst:gen-pwm}]
-gen_pwm : for i in 0 to 7 generate
-    u_pwm : entity work.pwm_gen
-        port map (
-            clk     => clk,
-            rst     => rst,
-            angle   => kalman_out((7-i)*8+7 downto (7-i)*8),
-            pwm_out => pwm_out(i)
-        );
-end generate;
-\end{lstlisting}
+Modulul \texttt{spi\_master} implementează protocolul SPI în modul cerut de convertor
+și derivă frecvența magistralei din ceasul de sistem, obținând cei 5~MHz folosiți
+pentru comunicație. La fel ca la recepția UART, linia de intrare dinspre convertor
+este trecută prin două bistabile înseriate, pentru a preveni metastabilitatea la
+trecerea între domeniile de timp.
 
-Fiecare instanță primește octetul de unghi corespunzător din vectorul de
-64~biți al ieșirii filtrului Kalman. Indexarea $(7-i) \times 8$ asigură
-corespondența corectă între canalele logice (0--7) și pozițiile din vectorul
-de biți.
+\subsection{Modul de funcționare autonomă}
 
-Deoarece fiecare instanță PWM posedă propriul numărător hardware, toate
-cele 8~canale funcționează în paralel, fără multiplexare în timp. Această
-proprietate a implementării FPGA garantează că actualizarea unui canal
-nu afectează în niciun fel celelalte canale, eliminând jitter-ul de
-interleaving prezent în implementările bazate pe microcontroler.
-
-%==========================================================================
-\section{Modulul \texttt{basys3\_top} --- Integrarea la nivel superior}
-\label{sec:basys3-top}
-
-Modulul \texttt{basys3\_top} este entitatea de nivel superior care
-instanțiază și interconectează toate cele 12~module descrise anterior.
-Porturile sale corespund pinilor fizici ai plăcii Basys3 Artix-7.
-
-\subsection{Conectarea porturilor}
-
-\begin{table}[H]
-\centering
-\caption{Maparea principală a porturilor la funcții}
-\label{tab:port-mapping}
-\begin{tabular}{@{}llp{6cm}@{}}
-\toprule
-\textbf{Port} & \textbf{Pin Basys3} & \textbf{Funcție} \\
-\midrule
-clk   & W5  & Oscilator 100\,MHz \\
-sw0   & V17 & Comutator mod demo \\
-btnC  & U18 & Buton reset (centru) \\
-RsRx  & B18 & UART recepție \\
-RsTx  & A18 & UART transmisie \\
-JA0--JA3 & J1, L2, J2, G2 & PWM servouri 0--3 (pinky, ring, middle, index) \\
-JB0--JB3 & A14, A16, B15, B16 & PWM servouri 4--7 (thumb, wrist, elbow) \\
-JC0 (CS) & K17 & SPI chip select AD7124 \\
-JC1 (MOSI) & M18 & SPI date ieșire \\
-JC2 (MISO) & N17 & SPI date intrare \\
-JC3 (SCLK) & P18 & SPI ceas \\
-led[0:15] & diverse & Indicatoare de stare \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Gestionarea pinilor neutilizați}
-
-Toți pinii neutilizați ai plăcii Basys3 sunt configurați la stări sigure
-pentru a preveni intrări flotante și consum inutil de curent:
-
-\begin{itemize}
-	\item \textbf{JA4--JA7, JB4--JB7, JC4--JC7:} Jumătatea superioară a
-	      conectorilor Pmod, forțată la '0' (drive low).
-	\item \textbf{seg[6:0], dp, an[3:0]:} Afișajul cu 7~segmente este activ
-	      la nivel logic scăzut; se forțează la '1' pentru a dezactiva toate
-	      segmentele și cifrele.
-	\item \textbf{vgaRed, vgaGreen, vgaBlue, Hsync, Vsync:} Ieșirile VGA
-	      sunt forțate la '0'.
-	\item \textbf{PS2Clk, PS2Data:} Interfața PS/2 este lăsată în
-	      înaltă impedanță ('Z') deoarece este un bus open-drain.
-	\item \textbf{JXADC[7:0]:} Header-ul analogic este lăsat în
-	      înaltă impedanță ('Z').
-	\item \textbf{sw[15:1], btnU/D/L/R:} Comutatoarele și butoanele
-	      neutilizate rămân ca intrări, citite dar neasignate.
-\end{itemize}
-
-\subsection{Indicatoarele LED}
-
-Cele 16~LED-uri de pe placa Basys3 sunt utilizate ca indicatoare de stare:
-
-\begin{table}[H]
-\centering
-\caption{Asignarea indicatoarelor LED}
-\label{tab:led-assignment}
-\begin{tabular}{@{}cl@{}}
-\toprule
-\textbf{LED} & \textbf{Semnal indicat} \\
-\midrule
-0 & Configurare ADC finalizată (\texttt{adc\_cfg\_done}) \\
-1 & Măsurătoare ADC validă (\texttt{meas\_valid}) \\
-2 & Cadru UART recepționat (\texttt{frame\_valid}) \\
-3 & Eroare de checksum (\texttt{frame\_chksum\_err}) \\
-4 & Filtru Kalman în execuție (\texttt{kalman\_busy}) \\
-5 & Mod demo activ, reflectă sw0 \\
-6 & Transmițător UART ocupat (\texttt{uart\_tx\_busy}) \\
-7 & SPI ocupat (\texttt{spi\_busy\_sig}) \\
-8--15 & Unghiul filtrat al servo 0 (8 biți) \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-LED-urile 8--15 afișează în binar unghiul filtrat al primului servo
-(degetul mic), oferind o verificare vizuală imediată a funcționării
-filtrului Kalman.
-
-\subsection{Logica de declanșare a răspunsului}
-
-Transmisia unui cadru de răspuns (readback) este declanșată atunci când
-un cadru valid cu direcția 0xFE este recepționat:
-
-\begin{lstlisting}[caption={Logica de declanșare a cadrului de răspuns},label={lst:readback-trigger}]
-process(clk)
-begin
-    if rising_edge(clk) then
-        send_readback <= '0';
-        if frame_valid = '1' and frame_dir = x"FE" then
-            send_readback <= '1';
-        end if;
-    end if;
-end process;
-\end{lstlisting}
-
-Această logică sincronă generează un puls de un ciclu de ceas pe semnalul
-\texttt{send\_readback}, care declanșează modulul \texttt{frame\_tx} să
-transmită un cadru de răspuns conținând cele 8~unghiuri filtrate curente.
-
-%==========================================================================
-\section{Proiectarea hardware --- circuitele de interfață}
-\label{sec:hw-design}
-
-Pe lângă implementarea FPGA, sistemul necesită circuite auxiliare de
-interfață pentru izolarea galvanică, alimentarea servomotoarelor și
-conversia de nivel logic.
-
-\subsection{Izolarea galvanică a semnalelor PWM --- ADUM1400}
-
-Semnalele PWM generate de FPGA (la nivel logic de 3,3\,V) trebuie
-convertite la 5\,V pentru servomotoarele MG996R. Se utilizează două circuite
-integrate ADUM1400, fiecare oferind 4~canale de izolare galvanică
-digitală. ADUM1400 este un izolator bazat pe tehnologia \textit{iCoupler}
-(transformatoare microfabricate), oferind:
-
-\begin{itemize}
-	\item Izolare galvanică de 2\,500\,V\textsubscript{rms}
-	\item Timp de propagare tipic de 32\,ns (neglijabil pentru semnale PWM)
-	\item Conversie de nivel logic intrinsecă: alimentat la 3,3\,V pe partea
-	      FPGA și la 5\,V pe partea servomotoare
-\end{itemize}
-
-Primul ADUM1400 convertește semnalele PWM pentru servomotoarele 0--3
-(JA0--JA3), iar al doilea pentru servomotoarele 4--7 (JB0--JB3).
-
-\subsection{Alimentarea servomotoarelor --- DC2468A}
-
-Cele 8~servomotoare MG996R consumă fiecare până la 700\,mA sub sarcină,
-totalizând un consum potențial de 5,6\,A la 5\,V. Sursa de alimentare
-utilizată este modulul DC2468A (bazat pe regulatorul LT3045), care
-convertește 12\,V dintr-un alimentator extern la 5\,V cu un curent maxim
-de 8\,A. Această marjă de 30\% asigură funcționarea stabilă chiar și
-când toate servomotoarele sunt acționate simultan.
-
-\subsection{Alimentarea circuitului ADC --- ADP165}
-
-ADC-ul AD7124-8 și izolorul SPI MAX14850 necesită alimentare la 3,3\,V
-separată de domeniul FPGA. Se utilizează un regulator LDO ADP165 care
-furnizează 3,3\,V cu zgomot ultra-scăzut din sursa de 5\,V, minimizând
-impactul zgomotului de alimentare asupra preciziei măsurătorilor ADC.
-
-\subsection{Izolarea SPI --- MAX14850}
-
-Interfața SPI dintre FPGA și AD7124-8 traversează un izolator digital
-MAX14850 cu 4~canale. Acesta asigură izolarea galvanică între domeniul
-de ceas FPGA (3,3\,V) și domeniul ADC (3,3\,V alimentat separat),
-prevenind buclele de masă care ar introduce zgomot în măsurătorile ADC.
-Cele 4~canale sunt utilizate pentru: SCLK, MOSI, MISO și CS.
-
-\subsection{Conectarea servomotoarelor MG996R}
-
-Servomotoarele MG996R sunt conectate prin cabluri cu 3~fire:
-\begin{itemize}
-	\item \textbf{Maro:} GND (masa comună)
-	\item \textbf{Roșu:} V+ (5\,V de la DC2468A)
-	\item \textbf{Portocaliu:} Semnal PWM (5\,V de la ADUM1400)
-\end{itemize}
-
-Fiecare MG996R dispune și de un al patrulea fir (alb), conectat la
-potențiometrul intern de feedback analogic. Acest semnal este direcționat
-către una din cele 8~intrări analogice ale AD7124-8 pentru citirea
-poziției reale a servomotorului.
+Pe lângă funcționarea comandată de la calculator, sistemul dispune de un mod autonom,
+activabil printr-un comutator de pe placă. În acest mod, multiplexorul
+\texttt{source\_mux} selectează ca sursă de unghiuri modulul \texttt{demo\_rom}, în
+locul cutiei poștale. Acesta conține o secvență predefinită de mișcări, parcursă
+pas cu pas la fiecare ciclu de control, prin care mâna execută o demonstrație
+repetitivă, fără a mai fi nevoie de conexiunea cu calculatorul. Modul autonom s-a
+dovedit deosebit de util pentru testarea mecanică a ansamblului și pentru
+demonstrarea funcționării independent de partea de viziune.

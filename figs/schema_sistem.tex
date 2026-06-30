@@ -1,0 +1,54 @@
+\documentclass[border=10pt]{standalone}
+\usepackage[utf8]{inputenc}
+\usepackage[romanian]{babel}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc}
+
+\begin{document}
+\begin{tikzpicture}[
+  font=\small,
+  >={Stealth[length=4pt]},
+  box/.style={draw=black!70,line width=0.8pt,rounded corners=2pt,
+              minimum height=1.1cm,minimum width=2.4cm,align=center,fill=white},
+  fpga/.style={box,fill=blue!8},
+  iso/.style={box,fill=orange!12},
+  load/.style={box,fill=green!10},
+  pwr/.style={box,fill=red!7,minimum height=1.0cm},
+  sig/.style={->,line width=1pt},
+  fb/.style={->,line width=1pt,dashed},
+  pwrline/.style={->,line width=1pt,red!55!black},
+  lab/.style={font=\footnotesize,text=black!70}
+]
+
+% ===== randul principal (comanda) =====
+\node[box,fill=black!6] (pc) {Calculator\\gazdă};
+\node[fpga,right=1.9cm of pc] (basys) {Placa FPGA\\Basys3};
+\node[iso,right=1.9cm of basys] (adum) {2 $\times$ ADuM1400\\\footnotesize izolare PWM};
+\node[load,right=1.9cm of adum] (servo) {8 $\times$ Servo\\MG996R};
+
+% ===== alimentarea servo (deasupra servo) =====
+\node[pwr,above=1.2cm of servo] (dc) {DC2468A\\\footnotesize 12\,V $\to$ 5\,V};
+
+% ===== randul de feedback (sub cel principal) =====
+\node[iso,below=2.2cm of adum] (max) {MAX14850\\\footnotesize izolare SPI};
+\node[load,below=2.2cm of servo] (adc) {ADC\\AD7124-8};
+
+% ===== alimentarea ADC (sub ADC) =====
+\node[pwr,below=1.2cm of adc] (adp) {ADP165\\\footnotesize 5\,V $\to$ 3{,}3\,V};
+
+% ===== fluxul de comanda =====
+\draw[sig] (pc) -- node[lab,above]{UART} (basys);
+\draw[sig] (basys) -- node[lab,above]{8$\times$PWM} (adum);
+\draw[sig] (adum) -- (servo);
+
+% ===== feedback (servo -> ADC -> MAX -> Basys3) =====
+\draw[fb] (servo) -- node[lab,right]{poziție} (adc);
+\draw[fb] (adc) -- node[lab,above]{SPI} (max);
+\draw[fb] (max.west) -| (basys.south);
+
+% ===== alimentare (linii verticale scurte) =====
+\draw[pwrline] (dc.south) -- node[lab,right,text=red!55!black]{5\,V} (servo.north);
+\draw[pwrline] (adp.north) -- node[lab,right,text=red!55!black]{3{,}3\,V} (adc.south);
+
+\end{tikzpicture}
+\end{document}

@@ -1,0 +1,20 @@
+\documentclass[border=8pt]{standalone}
+\usepackage[utf8]{inputenc}
+\usepackage[romanian]{babel}
+\usepackage{circuitikz}
+
+\begin{document}
+\begin{circuitikz}[scale=1.1, american]
+  % intrare feedback servo
+  \draw (0,2) node[left]{\footnotesize feedback servo} to[short,o-] (1.5,2);
+  % rezistenta serie 100k
+  \draw (1.5,2) to[R=$100\,\mathrm{k}\Omega$] (4,2);
+  % nodul de iesire catre ADC
+  \draw (4,2) -- (5,2) node[right]{\footnotesize către ADC};
+  \node[circ] at (4,2) {};
+  % rezistenta spre masa 300k
+  \draw (4,2) to[R=$300\,\mathrm{k}\Omega$] (4,0);
+  % masa
+  \draw (4,0) node[ground]{};
+\end{circuitikz}
+\end{document}

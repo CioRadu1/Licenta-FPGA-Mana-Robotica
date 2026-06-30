@@ -2,821 +2,762 @@
 \label{ch:analysis}
 \pagestyle{fancy}
 
-Acest capitol prezintă fundamentele teoretice ale sistemului de control pentru mâna robotică, tratând fiecare componentă din lanțul de semnal din perspectivă analitică. Scopul este de a justifica deciziile arhitecturale prin prisma cerințelor de timp real, a preciziei numerice și a teoriei controlului optimal. Capitolul se concentrează pe principii și pe demonstrații matematice, fără a face referire la detalii specifice de implementare.
+În capitolul precedent au fost prezentate proiectele și tehnologiile pe care se
+sprijină lucrarea de față. Acest capitol coboară cu un nivel mai jos și explică,
+din punct de vedere teoretic, modul în care funcționează fiecare verigă a
+sistemului de control. Sunt analizate, pe rând, structura logică a întregului
+lanț de prelucrare a semnalului, principiul mecanic prin care comenzile electrice
+se transformă în mișcarea degetelor, protocolul prin care calculatorul comunică
+cu placa, modelul matematic al filtrului Kalman, aritmetica folosită pentru a-l
+implementa pe o platformă fără unitate în virgulă mobilă, generarea semnalelor de
+comandă pentru servomotoare, constrângerile temporale impuse de funcționarea în
+timp real și, în final, raționamentul care a stat la baza alegerii componentelor
+electronice. Accentul cade aici pe principii și pe relațiile matematice care le
+descriu, urmând ca modul concret în care acestea au fost transpuse în hardware să
+fie tratat în capitolul de proiectare și implementare.
 
-\section{Arhitectura sistemului}
-\label{sec:arhitectura}
+\section{Structura logică a sistemului}
+\label{sec:analiza-structura}
 
-Sistemul de control al mâinii robotice operează ca un lanț de procesare a semnalelor în buclă închisă. Fluxul principal de date, de la captura video până la actuarea mecanică, traversează cinci etape funcționale distincte, fiecare cu cerințe temporale bine definite.
-
-\subsection{Lanțul de semnal}
-
-Semnalul de comandă parcurge următoarele etape:
-
-\begin{enumerate}
-	\item \textbf{Captură video și detecție} --- Un sistem de viziune artificială (MediaPipe) procesează fluxul video de la o cameră și extrage coordonatele articulațiilor mâinii umane. Aceste coordonate sunt convertite în 8 unghiuri de servo, corespunzătoare celor 8 grade de libertate ale mâinii robotice.
-
-	\item \textbf{Transmisie serială} --- Unghiurile sunt împachetate într-un cadru de 10 octeți și transmise prin UART la 115\,200~baud către placa FPGA.
-
-	\item \textbf{Procesare FPGA} --- Circuitul FPGA recepționează cadrul, validează suma de control, aplică filtrarea Kalman pe fiecare canal de servo și generează 8 semnale PWM corespunzătoare.
-
-	\item \textbf{Actuare} --- Semnalele PWM, după izolarea galvanică și conversia de nivel, comandă cele 8 servomotoare ale mâinii robotice.
-
-	\item \textbf{Feedback} --- Un convertor analog-digital pe 24 de biți citește tensiunile de feedback ale servomotoarelor, iar valorile măsurate sunt utilizate ca intrare în filtrul Kalman, închizând bucla de control.
-\end{enumerate}
+Sistemul poate fi privit ca un lanț prin care o mișcare a mâinii umane este
+transformată, pas cu pas, într-o mișcare echivalentă a mâinii robotice. La un
+capăt al lanțului se află un calculator care urmărește mâna operatorului cu
+ajutorul unei camere web, iar la celălalt capăt se găsesc cele opt servomotoare
+care acționează degetele și articulațiile brațului. Între cele două extreme se
+află placa FPGA, care primește datele, le filtrează și generează semnalele
+de comandă. Această împărțire pe niveluri este reprezentată în
+Figura~\ref{fig:schema-bloc}.
 
 \begin{figure}[H]
-\centering
-% TODO: Înlocuiți cu diagrama bloc reală (figs/block_diagram.pdf)
-\fbox{\parbox{0.9\textwidth}{\centering\vspace{2cm}
-\textbf{Diagramă bloc a sistemului}\\[6pt]
-\small
-Captură video $\rightarrow$ MediaPipe $\rightarrow$ UART TX $\rightarrow$ FPGA (UART RX $\rightarrow$ Mailbox $\rightarrow$ Kalman $\rightarrow$ PWM Gen) $\rightarrow$ Izolare galvanică $\rightarrow$ Servomotoare\\[6pt]
-$\uparrow$ \hspace{8cm} $\downarrow$\\[2pt]
-UART TX $\leftarrow$ FPGA $\leftarrow$ ADC (SPI) $\leftarrow$ Izolare galvanică $\leftarrow$ Feedback analog
-\vspace{2cm}}}
-\caption{Diagrama bloc a lanțului de semnal, incluzând bucla de feedback prin ADC.}
-\label{fig:block_diagram}
+	\centering
+	\includegraphics[width=0.95\textwidth]{figs/schema_bloc.pdf}
+	\caption{Structura logică a sistemului de control, cu fluxul principal de
+	comandă (linie continuă) și bucla de monitorizare prin convertorul
+	analog-digital (linie întreruptă).}
+	\label{fig:schema-bloc}
 \end{figure}
 
-\subsection{Ciclul de control de 20\,ms}
+Partea de viziune artificială, realizată de colegul meu, rulează pe calculatorul
+gazdă și se ocupă cu detecția poziției articulațiilor mâinii din fluxul video.
+Rezultatul acestei prelucrări este un set de opt unghiuri, câte unul pentru
+fiecare grad de libertate al mâinii robotice, exprimate ca valori întregi între 0
+și 180 de grade. Aceste unghiuri reprezintă, practic, comanda brută de poziție pe
+care sistemul trebuie să o reproducă. Ele sunt împachetate într-un cadru și
+trimise prin interfața serială UART către placa FPGA, despre care voi vorbi pe
+larg în secțiunea dedicată protocolului de comunicație.
 
-Elementul central al arhitecturii temporale este ciclul de control de 20~ms (50~Hz). Această frecvență nu este aleasă arbitrar, ci este dictată de specificația servomotoarelor standard:
+Odată ajunse pe placă, datele intră în partea centrală a sistemului, cea care
+constituie de fapt contribuția mea. Aici, un modul de recepție extrage unghiurile
+din cadrul primit și verifică integritatea acestora, după care valorile sunt
+preluate de filtrul Kalman. Filtrul tratează fiecare canal de servo în mod
+independent și are rolul de a netezi comenzile, eliminând variațiile bruște și
+zgomotul provenit din procesul de detecție vizuală. Pornind de la unghiurile
+filtrate, un generator dedicat produce cele opt semnale de tip PWM care comandă
+poziția servomotoarelor. Toate aceste module funcționează în paralel în interiorul
+circuitului, sincronizate de același ceas de sistem.
 
-\begin{itemize}
-	\item Servomotoarele de tip hobby așteaptă un semnal PWM cu o perioadă de 20~ms. Un impuls mai frecvent nu conferă un avantaj de precizie, iar unul mai rar poate duce la pierderea momentului de menținere.
-	\item La o rată de actualizare de 50~Hz, intervalul de timp $\Delta t = 0{,}02$~s asigură o rezoluție temporală suficientă pentru mișcări umane (frecvența maximă a mișcărilor voluntare ale degetelor este de aproximativ 5--8~Hz \cite{jones2006}).
-	\item Rata de 50~Hz oferă un ciclu de 2\,000\,000 de perioade de ceas la 100~MHz, furnizând un buget de timp generos pentru toate operațiunile de calcul.
-\end{itemize}
+Semnalele de comandă nu ajung însă direct la servomotoare. Ele traversează mai
+întâi o barieră de izolare galvanică, al cărei rol este de a separa complet
+domeniul digital, sensibil, al plăcii FPGA de domeniul de putere, mult mai
+zgomotos, în care lucrează motoarele. Abia după această izolare semnalele ajung la
+servomotoare și produc mișcarea efectivă a degetelor.
 
-Toate subsistemele funcționează sincronizat cu acest ciclu: recepția UART, prelucrarea Kalman, generarea PWM și citirea ADC se desfășoară în cadrul aceluiași interval de 20~ms.
+În paralel cu fluxul principal de comandă există și o cale de întoarcere,
+reprezentată în figură prin linia întreruptă. Un convertor analog-digital citește
+poziția reală a servomotoarelor și transmite aceste valori înapoi către placă,
+tot printr-o interfață izolată. Este important de subliniat că această cale are
+rol de monitorizare, nu de control în buclă închisă. Ea permite observarea
+poziției efective a articulațiilor, fără a interveni direct în generarea
+comenzilor, motiv pentru care a fost reprezentată distinct față de lanțul
+principal.
+
+Întregul sistem funcționează ritmat de un ciclu fix de 20 de milisecunde, valoare
+impusă de modul în care servomotoarele standard interpretează semnalul de comandă.
+La fiecare astfel de ciclu se preia cel mai recent set de unghiuri disponibil, se
+aplică filtrarea și se actualizează semnalele de ieșire. Acest ritm constituie
+referința temporală a întregului sistem și va reveni de mai multe ori pe parcursul
+capitolului, fiind elementul în jurul căruia se construiește analiza temporală din
+secțiunea dedicată.
+
+\section{Modelul de acționare a mâinii}
+\label{sec:analiza-actionare}
+
+Înainte de a discuta despre partea electronică, este util să înțelegem cum se
+transformă o comandă unghiulară a unui servomotor în îndoirea efectivă a unui
+deget. Mâna robotică folosită în această lucrare reproduce, într-o formă
+simplificată, mecanismul natural al mâinii umane, în care degetele sunt acționate
+prin tendoane. Modelul de funcționare este ilustrat în
+Figura~\ref{fig:mecanism}.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.85\textwidth]{figs/mecanism_actionare.pdf}
+	\caption{Principiul de acționare a unui deget prin tendon. Servomotorul trage
+	de firul care îndoaie degetul, iar elasticul de pe partea dorsală readuce
+	degetul în poziția inițială.}
+	\label{fig:mecanism}
+\end{figure}
+
+Fiecare deget este acționat de un singur servomotor, care joacă rolul mușchiului.
+Cornul rotativ al servomotorului trage de un fir ce traversează degetul pe partea
+palmară, exact așa cum tendoanele flexoare trag de oasele degetului uman. Atunci
+când servomotorul se rotește, firul este tras, iar degetul se îndoaie. Revenirea
+în poziția deschisă nu se face printr-un al doilea fir, ci pasiv, cu ajutorul unui
+element elastic montat pe partea dorsală a degetului, care preia rolul tendonului
+extensor. În felul acesta, un singur motor este suficient pentru a controla
+închiderea și deschiderea unui deget, ceea ce simplifică mult mecanismul.
+
+Firul care joacă rolul tendonului nu este unul oarecare. Pentru această funcție am
+ales un fir de pescuit din categoria celor cu rezistență ridicată și memorie
+redusă, cu un diametru de 0,27~mm și o rezistență la rupere de 14~kg, prezentat în
+Figura~\ref{fig:fir}. Diametrul mic îi permite să alunece ușor prin canalele de
+ghidare din interiorul degetelor, iar rezistența ridicată asigură că firul suportă
+fără probleme forțele dezvoltate de servomotor, chiar și atunci când degetul
+întâmpină rezistență. Memoria redusă a firului este de asemenea importantă,
+deoarece un fir care și-ar păstra forma de pe mosor ar introduce o tensiune
+suplimentară, nedorită, în mecanism.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.45\textwidth]{figs/fir_pescuit.jpg}
+	\caption{Firul de pescuit folosit pe post de tendon, cu diametrul de 0,27~mm
+	și rezistența la rupere de 14~kg.}
+	\label{fig:fir}
+\end{figure}
+
+Un detaliu important al mecanismului îl reprezintă modul în care firul este legat
+de servomotor. Între corn și deget, pe traseul firului, este montat în serie un
+arc elicoidal de extensie, asemănător celui prezentat în
+Figura~\ref{fig:arc}. La prima vedere ar putea părea un element în plus, însă
+rolul său este esențial. Servomotorul este un actuator rigid, care se deplasează
+exact în poziția comandată, fără a ceda. Dacă firul ar fi legat direct, orice
+comandă care ar cere o tragere mai mare decât permite degetul, sau orice blocare
+mecanică a acestuia, ar solicita brusc firul și articulațiile, putând duce la
+ruperea firului sau la deteriorarea pieselor printate. Arcul montat în serie preia
+aceste vârfuri de tensiune, întinzându-se atunci când forța depășește o anumită
+valoare și protejând astfel întregul ansamblu. El se comportă ca un element de
+siguranță elastic, care absoarbe șocurile și evită ruperea bruscă a firului.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.4\textwidth]{figs/arc_tensiune.jpg}
+	\caption{Arcul de extensie montat în serie pe firul de acționare, cu rolul de
+	a prelua vârfurile de tensiune și de a proteja mecanismul.}
+	\label{fig:arc}
+\end{figure}
+
+Pe lângă acționarea degetelor, același principiu bazat pe fire și scripeți este
+folosit și pentru rotația încheieturii. Un servomotor dedicat rotește un sistem de
+scripeți care permite întoarcerea palmei, reproducând mișcarea de rotație a
+mâinii umane. Modul concret în care toate aceste elemente au fost dimensionate și
+asamblate, împreună cu detaliile mecanice ale ansamblului, este tratat în
+capitolul de proiectare. Aici interesează doar principiul de funcționare, fiindcă
+el explică legătura dintre unghiul calculat de filtrul Kalman și mișcarea fizică
+pe care sistemul trebuie să o producă. Modelul cinematic detaliat al mecanismului
+de acționare prin tendoane a fost studiat pe larg de Hussein în lucrarea sa
+\cite{hussein2014}, de la care a fost preluată și o parte din structura mecanică a
+brațului.
 
 \section{Protocolul de comunicație UART}
-\label{sec:uart}
+\label{sec:analiza-uart}
 
-Comunicația dintre sistemul de viziune și FPGA se realizează prin interfața serială UART (\textit{Universal Asynchronous Receiver/Transmitter}), configurată la 115\,200~baud, 8 biți de date, fără paritate, 1 bit de stop (8N1).
+Legătura dintre calculatorul gazdă și placa FPGA se realizează prin interfața
+serială UART, o alegere motivată de simplitatea și fiabilitatea acestui protocol.
+UART nu necesită un semnal de ceas separat între cele două capete, ci se bazează
+pe o rată de transfer convenită dinainte, ceea ce reduce numărul de fire necesare
+la doar două, unul pentru fiecare sens de comunicație. În cazul de față se
+folosește o configurație clasică, cu o rată de 115200 de biți pe secundă, opt biți
+de date, fără bit de paritate și un singur bit de stop. Această configurație este
+îndeobște notată prescurtat 8N1 și reprezintă un compromis bun între viteză și
+robustețe pentru distanțele scurte din interiorul montajului.
 
-\subsection{Formatul cadrului}
+Datele nu sunt trimise octet cu octet la întâmplare, ci grupate într-un cadru cu o
+structură fixă. Fiecare cadru transportă unghiurile pentru toate cele opt
+servomotoare, împreună cu informația necesară pentru a delimita începutul cadrului
+și pentru a verifica integritatea datelor. Structura aleasă este reprezentată în
+Figura~\ref{fig:cadru-uart} și cuprinde zece octeți.
 
-Fiecare cadru de comunicație conține 10 octeți, organizați conform Tabelului~\ref{tab:frame_format}.
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.95\textwidth]{figs/cadru_uart.png}
+	\caption{Structura cadrului UART de zece octeți. Primul octet indică direcția,
+	urmează cele opt unghiuri articulare, iar ultimul octet conține suma de
+	control.}
+	\label{fig:cadru-uart}
+\end{figure}
 
-\begin{table}[H]
-\centering
-\caption{Structura cadrului UART de 10 octeți.}
-\label{tab:frame_format}
-\begin{tabular}{c l l}
-\toprule
-\textbf{Octet} & \textbf{Câmp} & \textbf{Descriere} \\
-\midrule
-0 & Direcție & \texttt{0xFF} = scriere unghiuri, \texttt{0xFE} = cerere de citire \\
-1 & Unghi servo 0 & Valoare 0--180 (grade) \\
-2 & Unghi servo 1 & Valoare 0--180 (grade) \\
-3 & Unghi servo 2 & Valoare 0--180 (grade) \\
-4 & Unghi servo 3 & Valoare 0--180 (grade) \\
-5 & Unghi servo 4 & Valoare 0--180 (grade) \\
-6 & Unghi servo 5 & Valoare 0--180 (grade) \\
-7 & Unghi servo 6 & Valoare 0--180 (grade) \\
-8 & Unghi servo 7 & Valoare 0--180 (grade) \\
-9 & Sumă de control & XOR al octeților 0--8 \\
-\bottomrule
-\end{tabular}
-\end{table}
+Primul octet al cadrului are rol de antet și de delimitator. El indică direcția
+transferului, distingând între o comandă prin care calculatorul trimite unghiuri
+noi către placă și o cerere prin care se solicită citirea valorilor curente.
+Urmează opt octeți, câte unul pentru fiecare articulație, în ordinea degetelor de
+la cel mic până la degetul mare, urmate de rotația încheieturii și de extensia
+cotului. Fiecare astfel de octet codifică un unghi cuprins între 0 și 180 de
+grade, valoare care încape exact pe un octet și nu necesită o reprezentare mai
+complexă. Ultimul octet al cadrului este o sumă de control, calculată ca SAU
+exclusiv al tuturor octeților anteriori, și servește la detectarea eventualelor
+erori de transmisie.
 
-Câmpul de direcție servește drept delimitator de cadru și indicator de operație. Valoarea \texttt{0xFF} indică o comandă de scriere --- FPGA-ul trebuie să actualizeze unghiurile servomotoarelor cu valorile primite. Valoarea \texttt{0xFE} indică o cerere de citire --- FPGA-ul răspunde cu un cadru conținând unghiurile curente (filtrate) ale servomotoarelor.
+Mecanismul sumei de control este simplu, dar eficient. La emisie, calculatorul
+combină prin SAU exclusiv toți cei nouă octeți de date și plasează rezultatul în
+ultimul octet. La recepție, placa repetă același calcul pe octeții primiți și
+compară rezultatul cu valoarea primită. Dacă vreun bit a fost alterat pe parcursul
+transmisiei, cele două valori nu mai coincid, iar cadrul este respins. Proprietatea
+matematică pe care se sprijină această verificare este aceea că orice valoare
+combinată prin SAU exclusiv cu ea însăși produce zero, astfel încât SAU exclusiv al
+tuturor celor zece octeți ai unui cadru corect trebuie să fie întotdeauna nul.
+Această metodă detectează toate erorile care afectează un singur bit și are
+avantajul că se calculează extrem de ușor în hardware, cu o singură operație logică
+pe ciclu de ceas.
 
-\subsection{Mecanismul sumei de control XOR}
+Merită analizat și timpul necesar transmiterii unui cadru, pentru că el trebuie să
+se încadreze confortabil în ciclul de control al sistemului. În formatul 8N1,
+fiecare octet ocupă de fapt zece biți pe linia serială, fiindcă la cei opt biți de
+date se adaugă bitul de start și bitul de stop. Un cadru complet de zece octeți
+înseamnă astfel o sută de biți transmiși. La rata de 115200 de biți pe secundă,
+timpul de transmisie al unui cadru întreg este de aproximativ 0,87~ms, adică sub
+cinci procente din ciclul de 20~ms al sistemului. Rămâne deci un interval larg
+între momentul sosirii unui cadru și momentul în care valorile trebuie folosite,
+ceea ce simplifică mult sincronizarea dintre recepție și prelucrare, aspect tratat
+în detaliu în secțiunea dedicată analizei temporale.
 
-Suma de control asigură integritatea datelor transmise. Algoritm\-ul funcționează după cum urmează:
+\section{Filtrul Kalman cu două stări}
+\label{sec:analiza-kalman}
 
-\textbf{La emițător:} Se calculează suma de control ca operație XOR succesivă a tuturor octeților de date:
+Filtrul Kalman reprezintă componenta centrală a prelucrării realizate pe placă.
+Rolul său este de a transforma unghiurile brute, primite de la sistemul de viziune
+și afectate de zgomot, într-o traiectorie netedă, care urmărește fidel mișcarea
+reală a mâinii operatorului fără a reproduce variațiile bruște și artefactele
+detecției vizuale. Principiul general al filtrului și ecuațiile sale în formă
+matriceală au fost prezentate în capitolul de studiu bibliografic. În cele ce
+urmează, filtrul este particularizat pentru cazul concret al acestui proiect, în
+care fiecare servomotor este modelat printr-un sistem cu două stări.
+
+\subsection{Alegerea modelului cu două stări}
+
+Pentru fiecare canal de servo se urmărește estimarea a două mărimi, poziția
+unghiulară și viteza unghiulară. Poziția este mărimea care interesează direct,
+fiindcă ea determină comanda trimisă servomotorului, în timp ce viteza este o
+mărime auxiliară, care permite filtrului să anticipeze evoluția mișcării între
+două măsurători succesive. Vectorul de stare conține așadar aceste două
+componente,
+%
 \begin{equation}
-\label{eq:checksum_tx}
-c = b_0 \oplus b_1 \oplus b_2 \oplus \cdots \oplus b_8
+\label{eq:kalman-stare}
+\mathbf{x} =
+\begin{bmatrix} x_0 \\ x_1 \end{bmatrix} =
+\begin{bmatrix} \text{poziție} \\ \text{viteză} \end{bmatrix} ,
 \end{equation}
-unde $b_i$ reprezintă octetul $i$ al cadrului, iar $\oplus$ este operația SAU-exclusiv pe biți. Valoarea $c$ este plasată în octetul 9 al cadrului.
+%
+unde $x_0$ reprezintă unghiul curent, exprimat în grade, iar $x_1$ reprezintă
+viteza de variație a acestuia, exprimată în grade pe secundă.
 
-\textbf{La receptor:} Se calculează XOR-ul tuturor celor 10 octeți recepționați:
-\begin{equation}
-\label{eq:checksum_rx}
-v = b_0 \oplus b_1 \oplus \cdots \oplus b_8 \oplus b_9
-\end{equation}
+Alegerea unui model cu exact două stări nu este întâmplătoare. Un model cu o
+singură stare, care ar reține doar poziția, nu ar putea anticipa în niciun fel
+mișcarea și s-ar comporta ca o simplă mediere a măsurătorilor, întârziind răspunsul
+la mișcările rapide ale mâinii. La cealaltă extremă, un model cu trei stări, care
+ar adăuga și accelerația, ar urmări mai fidel mișcările complexe, dar ar fi mai
+sensibil la zgomot și ar necesita un volum mai mare de calcule. Pentru o mână
+robotică ce urmărește gesturi umane, modelul cu două stări oferă cel mai bun
+echilibru, fiind suficient de expresiv pentru a anticipa mișcarea, dar destul de
+simplu pentru a fi implementat eficient în hardware.
 
-Substituind $b_9 = c = b_0 \oplus b_1 \oplus \cdots \oplus b_8$, obținem:
-\begin{equation}
-v = (b_0 \oplus b_1 \oplus \cdots \oplus b_8) \oplus (b_0 \oplus b_1 \oplus \cdots \oplus b_8) = \texttt{0x00}
-\end{equation}
+\subsection{Modelul de evoluție}
 
-deoarece orice valoare XOR-ată cu ea însăși produce zero ($a \oplus a = 0$, $\forall a$). Dacă un singur bit este alterat în timpul transmisiei, rezultatul verificării va fi nenul, iar cadrul este respins.
-
-Suma de control XOR detectează toate erorile de un singur bit și majoritatea erorilor multi-bit, fiind în același timp extrem de eficientă din punct de vedere computațional --- necesită doar 9 operații XOR, fiecare executabilă într-un singur ciclu de ceas.
-
-\subsection{Analiza temporală a transmisiei}
-
-La rata de 115\,200~baud cu formatul 8N1, fiecare octet necesită 10 biți pe linia serială (1~bit de start + 8~biți de date + 1~bit de stop). Timpul de transmisie pentru un cadru complet este:
-
-\begin{equation}
-\label{eq:uart_timing}
-T_\text{cadru} = \frac{10 \text{ octeți} \times 10 \text{ biți/octet}}{115\,200 \text{ biți/s}} = \frac{100}{115\,200} \approx 0{,}87\text{ ms}
-\end{equation}
-
-Acest timp reprezintă doar $4{,}3\%$ din ciclul de control de 20~ms, lăsând un interval generos pentru procesare.
-
-\subsection{Sincronizarea ceasului UART}
-
-La un ceas de sistem de 100~MHz, numărul de perioade de ceas corespunzător unui bit UART este:
-
-\begin{equation}
-\label{eq:clks_per_bit}
-N_\text{bit} = \frac{f_\text{clk}}{f_\text{baud}} = \frac{100\,000\,000}{115\,200} \approx 868 \text{ perioade de ceas}
-\end{equation}
-
-Eroarea de cuantizare este:
-\begin{equation}
-\varepsilon = \frac{868 \times 115\,200 - 100\,000\,000}{100\,000\,000} = \frac{16\,600}{100\,000\,000} \approx 0{,}017\%
-\end{equation}
-
-Această eroare este neglijabilă --- specificația UART tolerează abateri de până la $\pm 2\%$ de la rata de baud nominală.
-
-Receptorul eșantionează fiecare bit la jumătatea perioadei acestuia, după $N_\text{bit}/2 = 434$ perioade de ceas de la frontul descrescător al bitului de start. Eșantionarea la mijlocul bitului maximizează marginea temporală față de tranzițiile de pe linia serială.
-
-\section{Generarea semnalelor PWM}
-\label{sec:pwm}
-
-Servomotoarele standard sunt comandate prin modulație în lățimea impulsului (\textit{Pulse Width Modulation} --- PWM). Această secțiune analizează relația matematică dintre unghiul dorit și parametrii semnalului PWM.
-
-\subsection{Specificația semnalului servo PWM}
-
-Un semnal PWM standard pentru servomotoare are următoarele caracteristici:
-
-\begin{itemize}
-	\item \textbf{Perioada}: $T = 20$~ms (frecvența $f = 50$~Hz)
-	\item \textbf{Lățimea impulsului}: variabilă între 1{,}0~ms (0\textdegree) și 2{,}0~ms (180\textdegree)
-	\item \textbf{Relația unghi--durată}: liniară
-\end{itemize}
-
-Relația dintre unghiul $\alpha$ (în grade) și durata impulsului $\tau$ (în milisecunde) este:
-
-\begin{equation}
-\label{eq:pwm_pulse}
-\tau(\alpha) = 1{,}0 + \frac{\alpha}{180} \times 1{,}0 = 1{,}0 + \frac{\alpha}{180} \quad [\text{ms}]
-\end{equation}
-
-\subsection{Cuantizarea la 100~MHz}
-
-La o frecvență de ceas de 100~MHz ($T_\text{clk} = 10$~ns), valorile temporale se exprimă în număr de perioade de ceas:
-
-\begin{table}[H]
-\centering
-\caption{Corespondența dintre intervalele temporale și numărătoarele la 100~MHz.}
-\label{tab:pwm_counts}
-\begin{tabular}{l r r}
-\toprule
-\textbf{Interval} & \textbf{Durată} & \textbf{Perioade de ceas} \\
-\midrule
-Perioadă completă & 20~ms & 2\,000\,000 \\
-Impuls minim (0\textdegree) & 1{,}0~ms & 100\,000 \\
-Impuls maxim (180\textdegree) & 2{,}0~ms & 200\,000 \\
-Interval activ & 1{,}0~ms & 100\,000 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Pragul de comparație (\textit{threshold}) se calculează din unghiul $\alpha$ (valoare întreagă, $0 \leq \alpha \leq 180$):
-
-\begin{equation}
-\label{eq:threshold}
-\text{threshold}(\alpha) = 100\,000 + \alpha \times 556
-\end{equation}
-
-unde factorul de scală $556 \approx \lfloor 100\,000 / 180 \rfloor$ este obținut prin împărțirea intervalului activ de 100\,000 de cicluri la cele 180 de grade.
-
-\subsection{Principiul de funcționare}
-
-Generatorul PWM utilizează un numărător liber care parcurge valorile de la 0 la 1\,999\,999 (corespunzând perioadei de 20~ms). Semnalul de ieșire este determinat de comparația:
-
-\begin{equation}
-\label{eq:pwm_output}
-\text{PWM}_\text{out} =
-\begin{cases}
-1 & \text{dacă } \text{counter} < \text{threshold}(\alpha) \\
-0 & \text{altfel}
-\end{cases}
-\end{equation}
-
-Rezoluția unghiulară rezultată este:
-\begin{equation}
-\Delta\alpha = \frac{180\text{\textdegree}}{100\,000} = 0{,}0018\text{\textdegree}
-\end{equation}
-
-Această rezoluție depășește cu mult capacitatea mecanică a servomotoarelor (tipic $\pm 1$\textdegree), asigurând că precizia sistemului digital nu constituie un factor limitativ.
-
-\section{Filtrul Kalman --- fundamentare matematică}
-\label{sec:kalman}
-
-Filtrul Kalman reprezintă nucleul algoritmic al sistemului. Această secțiune derivă pas cu pas filtrul Kalman cu două stări utilizat pentru estimarea optimală a poziției și vitezei fiecărui servomotor.
-
-\subsection{Formularea problemei}
-
-Fiecare servomotor primește o comandă de poziție prin PWM, dar poziția reală este afectată de:
-\begin{itemize}
-	\item Inerția mecanică a servomotorului și a articulației;
-	\item Sarcina variabilă (greutatea degetului, forțe externe);
-	\item Zgomotul electronic al senzorului de feedback.
-\end{itemize}
-
-Se dorește estimarea optimală a poziției reale $x_0$ și a vitezei $x_1$, combinând predicția bazată pe un model fizic cu măsurătoarea de la convertor\-ul analog-digital.
-
-\subsection{Modelul de stare}
-\label{subsec:model_stare}
-
-Vectorul de stare conține poziția și viteza:
-\begin{equation}
-\label{eq:state_vector}
-\mathbf{x} = \begin{bmatrix} x_0 \\ x_1 \end{bmatrix} = \begin{bmatrix} \text{poziție [grade]} \\ \text{viteză [grade/s]} \end{bmatrix}
-\end{equation}
-
-\subsubsection{Ecuația de tranziție a stării}
-
-Modelul cinematic presupune viteză constantă pe durata unui interval de eșantionare $\Delta t$:
+Trecerea de la un moment de timp la următorul se face pe baza unui model cinematic
+simplu, în care se presupune că viteza rămâne aproximativ constantă pe durata unui
+interval de eșantionare $\Delta t$. Poziția la momentul următor este atunci poziția
+curentă, la care se adaugă distanța parcursă la viteza estimată, iar viteza rămâne
+neschimbată,
+%
 \begin{align}
-x_0(k+1) &= x_0(k) + \Delta t \cdot x_1(k) \label{eq:kinematic_pos} \\
-x_1(k+1) &= x_1(k) \label{eq:kinematic_vel}
+\label{eq:kalman-evolutie}
+x_0(k+1) &= x_0(k) + \Delta t \cdot x_1(k) , \\
+x_1(k+1) &= x_1(k) .
 \end{align}
-
-Aceste ecuații se exprimă matriceal prin intermediul matricei de tranziție $\mathbf{F}$:
+%
+Aceste relații se scriu compact cu ajutorul matricei de tranziție $\mathbf{F}$,
+sub forma $\mathbf{x}(k+1) = \mathbf{F}\,\mathbf{x}(k)$, unde
+%
 \begin{equation}
-\label{eq:state_transition}
-\mathbf{x}(k+1) = \mathbf{F} \cdot \mathbf{x}(k) + \mathbf{w}(k)
+\label{eq:kalman-F}
+\mathbf{F} =
+\begin{bmatrix} 1 & \Delta t \\ 0 & 1 \end{bmatrix} .
 \end{equation}
-unde:
+%
+Intervalul de eșantionare $\Delta t$ coincide cu ciclul de control al sistemului,
+adică 0,02 secunde, fiindcă filtrul este actualizat o singură dată la fiecare ciclu
+de 20~ms. Presupunerea de viteză constantă este o aproximație, însă pe un interval
+atât de scurt ea este pe deplin justificată, iar abaterile de la acest model sunt
+tratate de filtru prin intermediul zgomotului de proces.
+
+\subsection{Modelul de măsurare}
+
+Mărimea pe care sistemul o măsoară efectiv este doar poziția unghiulară, nu și
+viteza. Relația dintre starea sistemului și măsurătoare se exprimă prin matricea de
+observare $\mathbf{H}$, care selectează din vectorul de stare doar componenta de
+poziție,
+%
 \begin{equation}
-\label{eq:F_matrix}
-\mathbf{F} = \begin{bmatrix} 1 & \Delta t \\ 0 & 1 \end{bmatrix}, \qquad \Delta t = 0{,}02 \text{ s}
+\label{eq:kalman-H}
+z(k) = \mathbf{H}\,\mathbf{x}(k) + v(k) , \qquad
+\mathbf{H} = \begin{bmatrix} 1 & 0 \end{bmatrix} ,
 \end{equation}
+%
+unde $z(k)$ este poziția măsurată, iar $v(k)$ este zgomotul de măsurare. Faptul că
+viteza nu este direct observabilă nu împiedică filtrul să o estimeze, fiindcă ea
+este dedusă indirect din modul în care poziția măsurată evoluează în timp.
 
-iar $\mathbf{w}(k) \sim \mathcal{N}(\mathbf{0}, \mathbf{Q})$ este zgomotul de proces, modelat ca o variabilă aleatoare gaussiană cu medie zero și matrice de covarianță:
+\subsection{Zgomotul de proces și de măsurare}
+
+Comportamentul filtrului este controlat de două mărimi care exprimă încrederea
+acordată modelului față de măsurători. Prima este matricea zgomotului de proces
+$\mathbf{Q}$, care cuantifică gradul în care realitatea se abate de la modelul de
+viteză constantă. A doua este zgomotul de măsurare $R$, care exprimă cât de mult
+sunt afectate de zgomot valorile primite. Matricea $\mathbf{Q}$ este aleasă
+diagonală, presupunând că perturbațiile de poziție și de viteză sunt
+independente,
+%
 \begin{equation}
-\label{eq:Q_matrix}
-\mathbf{Q} = \begin{bmatrix} Q_{00} & 0 \\ 0 & Q_{11} \end{bmatrix}
+\label{eq:kalman-Q}
+\mathbf{Q} =
+\begin{bmatrix} Q_{00} & 0 \\ 0 & Q_{11} \end{bmatrix} .
 \end{equation}
+%
+Raportul dintre aceste mărimi determină echilibrul filtrului. Atunci când zgomotul
+de măsurare $R$ este mare în raport cu zgomotul de proces, filtrul acordă mai multă
+încredere predicției proprii și produce un răspuns neted, dar mai lent. În situația
+inversă, filtrul urmărește mai îndeaproape măsurătorile, reacționând rapid, dar
+lăsând să treacă o parte din zgomot. Valorile concrete folosite pentru acești
+parametri, precum și modul în care au fost reglate, sunt prezentate în capitolul de
+implementare.
 
-Matricea $\mathbf{Q}$ este diagonală, ceea ce presupune că perturbațiile în poziție și viteză sunt necorelate. Elementul $Q_{00}$ (în $\text{grade}^2$) cuantifică incertitudinea predicției de poziție, iar $Q_{11}$ (în $(\text{grade/s})^2$) cuantifică incertitudinea predicției de viteză.
+\subsection{Ciclul de predicție și actualizare}
 
-\subsubsection{Ecuația de observare}
-
-Senzorul de feedback (convertorul analog-digital) măsoară doar poziția:
+La fiecare ciclu de control, filtrul parcurge două etape succesive. În etapa de
+predicție, starea și incertitudinea asociată sunt proiectate înainte în timp pe
+baza modelului de evoluție. Poziția este avansată cu termenul corespunzător
+vitezei, iar matricea de covarianță $\mathbf{P}$, care descrie incertitudinea
+estimării, crește conform relației
+%
 \begin{equation}
-\label{eq:observation}
-z(k) = \mathbf{H} \cdot \mathbf{x}(k) + v(k)
+\label{eq:kalman-predict}
+\mathbf{x}^{-} = \mathbf{F}\,\mathbf{x} , \qquad
+\mathbf{P}^{-} = \mathbf{F}\,\mathbf{P}\,\mathbf{F}^{\top} + \mathbf{Q} .
 \end{equation}
-unde:
+%
+Creșterea incertitudinii în această etapă reflectă faptul că o predicție bazată pe
+un model imperfect devine, cu fiecare pas, mai puțin sigură.
+
+În etapa de actualizare, filtrul corectează predicția folosind măsurătoarea sosită.
+Se calculează mai întâi diferența dintre valoarea măsurată și cea prezisă, numită
+inovație, precum și incertitudinea totală asociată acesteia,
+%
 \begin{equation}
-\label{eq:H_matrix}
-\mathbf{H} = \begin{bmatrix} 1 & 0 \end{bmatrix}
+\label{eq:kalman-innov}
+y = z - \mathbf{H}\,\mathbf{x}^{-} , \qquad
+S = \mathbf{H}\,\mathbf{P}^{-}\mathbf{H}^{\top} + R .
 \end{equation}
-
-iar $v(k) \sim \mathcal{N}(0, R)$ este zgomotul de măsurătoare, cu varianța $R$ (în $\text{grade}^2$). Matricea $\mathbf{H}$ extrage doar componenta de poziție din vectorul de stare --- viteza nu este direct observabilă.
-
-\subsubsection{Matricea de covarianță a erorii de estimare}
-
-Incertitudinea estimării este descrisă de matricea de covarianță simetrică $\mathbf{P}$:
+%
+Pe baza acestor mărimi se determină câștigul Kalman $\mathbf{K}$, care stabilește
+proporția în care inovația corectează estimarea,
+%
 \begin{equation}
-\label{eq:P_matrix}
-\mathbf{P} = \begin{bmatrix} P_{00} & P_{01} \\ P_{01} & P_{11} \end{bmatrix}
+\label{eq:kalman-gain}
+\mathbf{K} = \mathbf{P}^{-}\mathbf{H}^{\top} S^{-1} .
 \end{equation}
-
-unde $P_{00}$ este varianța erorii de poziție, $P_{11}$ este varianța erorii de viteză, iar $P_{01}$ este covarianța încrucișată (corelația dintre erorile de poziție și viteză).
-
-\subsection{Pasul de predicție}
-\label{subsec:predictie}
-
-La fiecare ciclu de control, filtrul Kalman începe cu o predicție a stării pe baza modelului cinematic. Acest pas \textit{propagă} starea și incertitudinea înainte în timp.
-
-\subsubsection{Predicția stării}
-
-Aplicând ecuația de tranziție~(\ref{eq:state_transition}) fără termenul de zgomot:
+%
+În final, starea și covarianța sunt corectate cu ajutorul câștigului astfel
+obținut,
+%
 \begin{equation}
-\label{eq:x_pred}
-\hat{\mathbf{x}}^{-} = \mathbf{F} \cdot \hat{\mathbf{x}} = \begin{bmatrix} 1 & \Delta t \\ 0 & 1 \end{bmatrix} \begin{bmatrix} \hat{x}_0 \\ \hat{x}_1 \end{bmatrix} = \begin{bmatrix} \hat{x}_0 + \Delta t \cdot \hat{x}_1 \\ \hat{x}_1 \end{bmatrix}
+\label{eq:kalman-update}
+\mathbf{x} = \mathbf{x}^{-} + \mathbf{K}\,y , \qquad
+\mathbf{P} = (\mathbf{I} - \mathbf{K}\,\mathbf{H})\,\mathbf{P}^{-} .
 \end{equation}
+%
+Un aspect remarcabil al acestui mecanism este faptul că viteza, deși nu este
+măsurată direct, ajunge totuși să fie corectată. Acest lucru se întâmplă prin
+intermediul corelației dintre poziție și viteză, reținută în matricea de
+covarianță. Atunci când măsurătorile arată în mod constant că poziția evoluează
+diferit față de predicție, câștigul Kalman ajustează și estimarea de viteză, astfel
+încât filtrul ajunge, în timp, să deducă viteza reală a mișcării pornind doar de la
+observarea poziției. Această proprietate este cea care permite filtrului să
+anticipeze corect mișcarea și constituie principalul motiv pentru care a fost
+preferat modelul cu două stări în locul unei simple medieri a măsurătorilor.
 
-Interpretare fizică:
-\begin{itemize}
-	\item Poziția predicționată: $\hat{x}_0^{-} = \hat{x}_0 + \Delta t \cdot \hat{x}_1$ --- poziția anterioară plus distanța parcursă la viteza estimată pe durata $\Delta t$.
-	\item Viteza predicționată: $\hat{x}_1^{-} = \hat{x}_1$ --- viteza rămâne neschimbată în etapa de predicție, conform ipotezei de viteză constantă.
-\end{itemize}
+\section{Aritmetica în virgulă fixă Q16.16}
+\label{sec:analiza-q16}
 
-De exemplu, dacă servomotorul se află la 90\textdegree{} cu o viteză estimată de 100\textdegree/s, după $\Delta t = 0{,}02$~s predicția este $90 + 0{,}02 \times 100 = 92$\textdegree.
+Ecuațiile filtrului Kalman prezentate mai sus presupun lucrul cu numere reale, cu
+parte fracționară. O placă FPGA precum cea folosită în acest proiect nu dispune
+însă, în mod nativ, de unități de calcul în virgulă mobilă, iar adăugarea unora ar
+consuma o cantitate importantă de resurse și ar complica respectarea
+constrângerilor de timp. Soluția adoptată este aceea de a efectua toate calculele
+în aritmetică cu virgulă fixă, folosind formatul cunoscut sub numele de Q16.16.
+Această secțiune explică formatul și justifică alegerea lui.
 
-\subsubsection{Predicția covarianței}
+Ideea aritmeticii în virgulă fixă este de a reprezenta un număr real folosind un
+întreg obișnuit, în care se convine dinainte câte cifre binare aparțin părții
+întregi și câte părții fracționare. În formatul Q16.16 se folosește un cuvânt de 32
+de biți cu semn, în care primii 16 biți rețin partea întreagă, iar ceilalți 16 biți
+rețin partea fracționară. Practic, un număr real este memorat prin întregul obținut
+înmulțindu-l cu $2^{16}$, adică cu 65536. De exemplu, valoarea 1 este reprezentată
+intern prin 65536, iar valoarea 0,02 a intervalului de eșantionare este
+reprezentată prin 1311, adică $0{,}02 \times 65536$ rotunjit la cel mai apropiat
+întreg.
 
-Matricea de covarianță predicționată se obține din:
+Această reprezentare oferă un compromis foarte bun pentru aplicația de față. Cei 16
+biți fracționari asigură o rezoluție de $2^{-16}$, adică în jur de
+$1{,}5 \times 10^{-5}$, mai mult decât suficientă pentru a reprezenta cu precizie
+atât unghiurile, cât și mărimile mici din matricea de covarianță a filtrului. În
+același timp, cei 16 biți întregi permit reprezentarea unor valori până la peste
+treizeci de mii, cu mult peste intervalul util al unghiurilor, care nu depășesc 180
+de grade. Un format mai mic, cu doar opt biți fracționari, ar fi introdus erori de
+rotunjire prea mari în calculele cu valori mici ale covarianței, în timp ce un
+format cu mai mulți biți ar fi consumat resurse suplimentare fără un câștig real de
+precizie.
+
+Operațiile aritmetice trebuie tratate cu atenție în acest format. Adunarea și
+scăderea a două numere Q16.16 se efectuează direct, ca între întregi obișnuiți,
+deoarece ambele valori au același factor de scală. Înmulțirea necesită însă o
+corecție. Atunci când se înmulțesc două numere reprezentate prin înmulțire cu
+65536, rezultatul ajunge să fie scalat cu pătratul acestui factor, motiv pentru
+care produsul pe 64 de biți trebuie deplasat la dreapta cu 16 biți pentru a reveni
+la formatul corect. În mod similar, împărțirea cere ca deîmpărțitul să fie deplasat
+în prealabil la stânga cu 16 biți, astfel încât rezultatul să păstreze partea
+fracționară care altfel s-ar pierde prin împărțirea întreagă. Aceste ajustări sunt
+esențiale pentru corectitudinea calculelor și sunt aplicate consecvent în
+implementarea filtrului.
+
+Tocmai operația de împărțire, necesară la calculul câștigului Kalman, este cea mai
+costisitoare din întregul algoritm și ridică cele mai multe probleme atunci când
+trebuie încadrată în constrângerile de timp ale plăcii. Modul concret în care a
+fost realizată această operație în hardware, împreună cu provocările legate de
+închiderea temporală a circuitului, este detaliat în secțiunea următoare și în
+capitolul de implementare.
+
+\section{Controlul servomotoarelor prin PWM}
+\label{sec:analiza-pwm}
+
+Rezultatul filtrării Kalman este, pentru fiecare canal, un unghi dorit care trebuie
+transmis servomotorului corespunzător. Servomotoarele standard nu se comandă însă
+printr-o valoare numerică, ci printr-un semnal modulat în durată, cunoscut sub
+numele de PWM. Această secțiune analizează relația dintre unghiul dorit și
+parametrii semnalului de comandă, precum și fundamentarea alegerii
+servomotoarelor.
+
+Servomotorul folosit în acest proiect este modelul MG996R, prezentat în
+Figura~\ref{fig:servo}. Este un servomotor de uz general, cu angrenaje metalice și
+un cuplu de aproximativ 11~kg$\cdot$cm la tensiunea de alimentare folosită. Cuplul
+ridicat a fost criteriul principal de alegere, deoarece servomotorul trebuie să
+tragă de firul care acționează degetul și, în același timp, să învingă rezistența
+elementului elastic de revenire. Un servomotor cu cuplu mai mic ar fi avut
+dificultăți în a închide complet degetele atunci când acestea întâmpină
+rezistență, mai ales în cazul prinderii unui obiect. Angrenajele metalice
+contribuie la durabilitatea ansamblului, fiind mai rezistente la solicitările
+repetate decât cele din plastic.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.5\textwidth]{figs/servo_mg996r.jpg}
+	\caption{Servomotorul MG996R folosit pentru acționarea articulațiilor, cu
+	angrenaje metalice și un cuplu de aproximativ 11~kg$\cdot$cm.}
+	\label{fig:servo}
+\end{figure}
+
+Semnalul PWM care comandă un astfel de servomotor are o structură bine definită.
+El este periodic, cu o perioadă de 20 de milisecunde, iar informația de poziție nu
+este transmisă prin amplitudine, ci prin durata impulsului activ din cadrul
+fiecărei perioade. Un impuls cu durata de aproximativ 1 milisecundă corespunde
+poziției de la o extremă a cursei, un impuls de 2 milisecunde corespunde celeilalte
+extreme, iar valorile intermediare determină proporțional unghiul dorit. Această
+corespondență este ilustrată în Figura~\ref{fig:timing-pwm}, unde sunt suprapuse
+cele trei cazuri reprezentative pentru pozițiile de 0, 90 și 180 de grade.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.8\textwidth]{figs/timing_pwm.pdf}
+	\caption{Relația dintre durata impulsului și unghiul comandat. Un impuls de
+	1~ms corespunde poziției de 0 grade, unul de 1,5~ms poziției de 90 de grade,
+	iar unul de 2~ms poziției de 180 de grade, toate în cadrul aceleiași perioade
+	de 20~ms.}
+	\label{fig:timing-pwm}
+\end{figure}
+
+Relația dintre unghiul dorit $\alpha$, exprimat în grade, și durata impulsului
+$\tau$, exprimată în milisecunde, este liniară și se scrie sub forma
+%
 \begin{equation}
-\label{eq:P_pred_general}
-\mathbf{P}^{-} = \mathbf{F} \cdot \mathbf{P} \cdot \mathbf{F}^{\mathsf{T}} + \mathbf{Q}
+\label{eq:pwm-pulse}
+\tau(\alpha) = 1{,}0 + \frac{\alpha}{180} ,
 \end{equation}
-
-Dezvoltăm produsul matriceal $\mathbf{F} \cdot \mathbf{P} \cdot \mathbf{F}^{\mathsf{T}}$ explicit. Mai întâi, calculăm $\mathbf{F} \cdot \mathbf{P}$:
-\begin{equation}
-\mathbf{F} \cdot \mathbf{P} = \begin{bmatrix} 1 & \Delta t \\ 0 & 1 \end{bmatrix} \begin{bmatrix} P_{00} & P_{01} \\ P_{01} & P_{11} \end{bmatrix} = \begin{bmatrix} P_{00} + \Delta t \cdot P_{01} & P_{01} + \Delta t \cdot P_{11} \\ P_{01} & P_{11} \end{bmatrix}
-\end{equation}
-
-Apoi, înmulțim la dreapta cu $\mathbf{F}^{\mathsf{T}}$:
-\begin{equation}
-\mathbf{F}^{\mathsf{T}} = \begin{bmatrix} 1 & 0 \\ \Delta t & 1 \end{bmatrix}
-\end{equation}
-
-\begin{equation}
-\mathbf{F} \cdot \mathbf{P} \cdot \mathbf{F}^{\mathsf{T}} = \begin{bmatrix} P_{00} + \Delta t \cdot P_{01} & P_{01} + \Delta t \cdot P_{11} \\ P_{01} & P_{11} \end{bmatrix} \begin{bmatrix} 1 & 0 \\ \Delta t & 1 \end{bmatrix}
-\end{equation}
-
-Calculând element cu element și adăugând $\mathbf{Q}$, obținem componentele matricei de covarianță predicționată:
-\begin{align}
-P_{00}^{-} &= P_{00} + 2 \Delta t \cdot P_{01} + \Delta t^2 \cdot P_{11} + Q_{00} \label{eq:pp00} \\
-P_{01}^{-} &= P_{01} + \Delta t \cdot P_{11} \label{eq:pp01} \\
-P_{11}^{-} &= P_{11} + Q_{11} \label{eq:pp11}
-\end{align}
-
-Interpretare fizică:
-\begin{itemize}
-	\item Ecuația~(\ref{eq:pp00}): Incertitudinea în poziție crește datorită propagării incertitudinii de viteză ($\Delta t^2 \cdot P_{11}$), a corelației existente ($2\Delta t \cdot P_{01}$) și a zgomotului de proces ($Q_{00}$). Termenul dominant este cel legat de viteză --- o viteză incertă produce o predicție de poziție incertă.
-	\item Ecuația~(\ref{eq:pp01}): Covarianța încrucișată crește cu $\Delta t \cdot P_{11}$, reflectând faptul că integrarea unei viteze incerte introduce corelație între erorile de poziție și viteză.
-	\item Ecuația~(\ref{eq:pp11}): Incertitudinea în viteză crește doar prin adunarea zgomotului de proces $Q_{11}$, deoarece modelul presupune viteză constantă.
-\end{itemize}
-
-Fără pasul de actualizare, covarianța ar crește nelimitat la fiecare iterație --- aceasta este degradarea naturală a oricărei predicții bazate pe un model imperfect.
-
-\subsection{Pasul de actualizare (corecție)}
-\label{subsec:actualizare}
-
-Pasul de actualizare încorporează măsurătoarea de la ADC pentru a corecta predicția. Aceasta este esența filtrului Kalman: combinarea optimală a informației din predicție și din măsurătoare.
-
-\subsubsection{Inovația}
-
-Inovația (\textit{innovation}) reprezintă diferența dintre măsurătoare și predicție:
-\begin{equation}
-\label{eq:innovation}
-y = z - \mathbf{H} \cdot \hat{\mathbf{x}}^{-} = z - \hat{x}_0^{-}
-\end{equation}
-
-unde $z$ este poziția măsurată de ADC. Inovația cuantifică \textit{surpriza} --- cât de mult diferă realitatea (măsurată) de așteptare (predicția). O inovație mare indică fie o predicție proastă, fie o măsurătoare zgomotoasă.
-
-\subsubsection{Covarianța inovației}
-
-Covarianța inovației combină incertitudinea predicției cu zgomotul de măsurătoare:
-\begin{equation}
-\label{eq:innovation_cov}
-S = \mathbf{H} \cdot \mathbf{P}^{-} \cdot \mathbf{H}^{\mathsf{T}} + R
-\end{equation}
-
-Deoarece $\mathbf{H} = \begin{bmatrix} 1 & 0 \end{bmatrix}$, extragerea se simplifică la:
-\begin{equation}
-S = P_{00}^{-} + R
-\end{equation}
-
-Valoarea $S$ reprezintă incertitudinea totală asupra inovației --- suma incertitudinii predicției de poziție și a zgomotului senzorului.
-
-\subsubsection{Câștigul Kalman}
-
-Câștigul Kalman (\textit{Kalman gain}) determină ponderea acordată măsurătorii în corecția estimării:
-\begin{equation}
-\label{eq:kalman_gain}
-\mathbf{K} = \mathbf{P}^{-} \cdot \mathbf{H}^{\mathsf{T}} \cdot S^{-1}
-\end{equation}
-
-Dezvoltând:
-\begin{equation}
-\mathbf{K} = \begin{bmatrix} P_{00}^{-} \\ P_{01}^{-} \end{bmatrix} \cdot \frac{1}{S} = \begin{bmatrix} K_0 \\ K_1 \end{bmatrix}
-\end{equation}
-
-unde:
-\begin{align}
-K_0 &= \frac{P_{00}^{-}}{S} = \frac{P_{00}^{-}}{P_{00}^{-} + R} \label{eq:K0} \\[6pt]
-K_1 &= \frac{P_{01}^{-}}{S} = \frac{P_{01}^{-}}{P_{00}^{-} + R} \label{eq:K1}
-\end{align}
-
-Analiza limitelor câștigului $K_0$ revelă comportamentul adaptiv al filtrului:
-\begin{itemize}
-	\item Dacă $P_{00}^{-} \gg R$ (incertitudine mare a predicției, senzor precis): $K_0 \to 1$, filtrul „are încredere" în măsurătoare.
-	\item Dacă $P_{00}^{-} \ll R$ (predicție precisă, senzor zgomotos): $K_0 \to 0$, filtrul „are încredere" în predicție.
-	\item În regim staționar, câștigul converge la o valoare intermediară care realizează compromisul optim.
-\end{itemize}
-
-\subsubsection{Actualizarea stării}
-
-Starea corectată se obține adăugând corecția proporțională cu inovația:
-\begin{equation}
-\label{eq:state_update}
-\hat{\mathbf{x}} = \hat{\mathbf{x}}^{-} + \mathbf{K} \cdot y
-\end{equation}
-
-Componentă cu componentă:
-\begin{align}
-\hat{x}_0 &= \hat{x}_0^{-} + K_0 \cdot y \label{eq:x0_update} \\
-\hat{x}_1 &= \hat{x}_1^{-} + K_1 \cdot y \label{eq:x1_update}
-\end{align}
-
-Ecuația~(\ref{eq:x0_update}) corectează poziția estimată: dacă măsurătoarea indică o poziție mai mare decât cea predicționată ($y > 0$), poziția estimată crește cu $K_0 \cdot y$.
-
-Ecuația~(\ref{eq:x1_update}) este deosebit de semnificativă: \textbf{viteza este corectată pe baza erorii de poziție}, deși viteza nu este direct măsurată. Mecanismul este următorul: dacă măsurătorile arată în mod consistent că servomotorul se deplasează mai departe decât predicția ($y > 0$ repetat), câștigul $K_1$ produce o corecție pozitivă a vitezei, iar estimarea de viteză crește treptat.
-
-Aceasta este o proprietate fundamentală a filtrului Kalman: prin corelația încrucișată $P_{01}$ (cuprinsă în $K_1$), informația din măsurătoarea de poziție se propagă în estimarea de viteză. Filtrul „învață" viteza reală, chiar dacă modelul presupune viteză constantă.
-
-\subsubsection{Actualizarea covarianței}
-
-După încorporarea măsurătorii, incertitudinea estimării scade:
-\begin{equation}
-\label{eq:P_update_general}
-\mathbf{P} = (\mathbf{I} - \mathbf{K} \cdot \mathbf{H}) \cdot \mathbf{P}^{-}
-\end{equation}
-
-Dezvoltăm matriceal:
-\begin{equation}
-\mathbf{I} - \mathbf{K} \cdot \mathbf{H} = \begin{bmatrix} 1 & 0 \\ 0 & 1 \end{bmatrix} - \begin{bmatrix} K_0 \\ K_1 \end{bmatrix} \begin{bmatrix} 1 & 0 \end{bmatrix} = \begin{bmatrix} 1 - K_0 & 0 \\ -K_1 & 1 \end{bmatrix}
-\end{equation}
-
-Înmulțind cu $\mathbf{P}^{-}$:
-\begin{equation}
-\mathbf{P} = \begin{bmatrix} 1 - K_0 & 0 \\ -K_1 & 1 \end{bmatrix} \begin{bmatrix} P_{00}^{-} & P_{01}^{-} \\ P_{01}^{-} & P_{11}^{-} \end{bmatrix}
-\end{equation}
-
-Componentele rezultante sunt:
-\begin{align}
-P_{00} &= (1 - K_0) \cdot P_{00}^{-} \label{eq:p00_update} \\
-P_{01} &= (1 - K_0) \cdot P_{01}^{-} \label{eq:p01_update} \\
-P_{11} &= -K_1 \cdot P_{01}^{-} + P_{11}^{-} \label{eq:p11_update}
-\end{align}
-
-Deoarece $0 < K_0 < 1$, factorul $(1 - K_0)$ reduce $P_{00}$ și $P_{01}$ --- fiecare măsurătoare diminuează incertitudinea estimării. Ecuația~(\ref{eq:p11_update}) arată că și incertitudinea vitezei scade (prin termenul $-K_1 \cdot P_{01}^{-}$), deși mai lent, deoarece viteza este doar indirect observată.
-
-\subsection{Ciclul predicție--actualizare: o perspectivă unitară}
-\label{subsec:ciclu}
-
-Algoritmul complet se rezumă la cele două etape, repetate la fiecare 20~ms:
-
-\begin{table}[H]
-\centering
-\caption{Rezumatul algoritmului Kalman cu două stări.}
-\label{tab:kalman_summary}
-\begin{tabular}{l l l}
-\toprule
-\textbf{Pas} & \textbf{Ecuație} & \textbf{Semnificație} \\
-\midrule
-\multicolumn{3}{l}{\textit{Predicție}} \\
-1 & $\hat{x}_0^{-} = \hat{x}_0 + \Delta t \cdot \hat{x}_1$ & Propagare poziție \\
-2 & $\hat{x}_1^{-} = \hat{x}_1$ & Propagare viteză \\
-3 & $P_{00}^{-} = P_{00} + 2\Delta t \cdot P_{01} + \Delta t^2 \cdot P_{11} + Q_{00}$ & Creștere incertitudine \\
-4 & $P_{01}^{-} = P_{01} + \Delta t \cdot P_{11}$ & \\
-5 & $P_{11}^{-} = P_{11} + Q_{11}$ & \\
-\midrule
-\multicolumn{3}{l}{\textit{Actualizare}} \\
-6 & $y = z - \hat{x}_0^{-}$ & Inovație \\
-7 & $S = P_{00}^{-} + R$ & Covarianță inovație \\
-8 & $K_0 = P_{00}^{-} / S, \quad K_1 = P_{01}^{-} / S$ & Câștig Kalman \\
-9 & $\hat{x}_0 = \hat{x}_0^{-} + K_0 \cdot y$ & Corecție poziție \\
-10 & $\hat{x}_1 = \hat{x}_1^{-} + K_1 \cdot y$ & Corecție viteză \\
-11 & $P_{00} = (1 - K_0) \cdot P_{00}^{-}$ & Reducere incertitudine \\
-12 & $P_{01} = (1 - K_0) \cdot P_{01}^{-}$ & \\
-13 & $P_{11} = -K_1 \cdot P_{01}^{-} + P_{11}^{-}$ & \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Echilibrul dinamic predicție--actualizare asigură funcționarea filtrului: predicția crește incertitudinea (covarianța crește), iar actualizarea o reduce (covarianța scade). În regim staționar, cele două efecte se echilibrează, iar câștigul Kalman converge la o valoare fixă.
-
-\subsection{Alegerea parametrilor și semnificația lor fizică}
-\label{subsec:tuning}
-
-Performanța filtrului Kalman este determinată de alegerea matricelor de zgomot $\mathbf{Q}$ și $R$. Aceste valori nu au soluții analitice universale --- ele codifică asumpțiile proiectantului despre mediul de operare.
-
-\subsubsection{Zgomotul de proces $\mathbf{Q}$}
-
-Matricea $\mathbf{Q}$ modelează gradul în care realitatea deviază de la modelul de viteză constantă. Pentru un servomotor:
-
-\begin{itemize}
-	\item $Q_{00}$ (varianța perturbației de poziție): o valoare mică (de exemplu, $0{,}01~\text{grade}^2$) indică faptul că poziția nu se schimbă semnificativ din cauze nemodulate de viteză. Valori tipice se situează între $0{,}001$ și $0{,}1~\text{grade}^2$.
-
-	\item $Q_{11}$ (varianța perturbației de viteză): o valoare mai mare (de exemplu, $0{,}1~(\text{grade/s})^2$) permite filtrului să „urmărească" schimbările de viteză. Valori tipice se situează între $0{,}01$ și $1{,}0~(\text{grade/s})^2$.
-\end{itemize}
-
-\textbf{Efect:} Un $\mathbf{Q}$ mic produce un răspuns mai neted dar mai lent --- filtrul „are încredere" în predicție și reacționează lent la schimbările reale. Un $\mathbf{Q}$ mare produce un răspuns mai rapid dar mai zgomotos --- filtrul urmărește fidel măsurătoarea, dar amplifică și zgomotul.
-
-\subsubsection{Zgomotul de măsurătoare $R$}
-
-Scalarul $R$ (în $\text{grade}^2$) cuantifică încrederea în măsurătoarea ADC. Acesta depinde de:
-
-\begin{itemize}
-	\item Rezoluția ADC-ului și zgomotul de cuantizare;
-	\item Zgomotul analogic al circuitului de feedback (inductanțe parazite, interferențe electromagnetice de la motoare);
-	\item Neliniaritățile potențiometrului de feedback al servomotorului.
-\end{itemize}
-
-\textbf{Efect:} Un $R$ mic (de exemplu, $0{,}1~\text{grade}^2$) face filtrul responsiv la măsurători, dar vulnerabil la zgomotul senzorului. Un $R$ mare (de exemplu, $10~\text{grade}^2$) produce o filtrare mai agresivă, dar întârzie răspunsul la schimbări reale.
-
-\subsubsection{Incertitudinea inițială $\mathbf{P}_0$}
-
-Matricea de covarianță inițială trebuie să reflecte lipsa de cunoaștere la pornire:
-\begin{equation}
-\mathbf{P}_0 = \begin{bmatrix} P_\text{init} & 0 \\ 0 & P_\text{init} \end{bmatrix}
-\end{equation}
-
-O valoare mare a $P_\text{init}$ (de exemplu, 10) semnalizează filtrului că estimarea inițială este nesigură. Consecința practică: în primele iterații, câștigul Kalman este apropiat de 1, iar filtrul „urmărește" măsurătoarea aproape integral. Pe măsură ce covarianța converge (după 10--20 de iterații, adică 0{,}2--0{,}4~s), filtrul ajunge la comportamentul staționar și nu mai depinde de valoarea inițială.
-
-\subsubsection{Compromisul fundamental}
-
-Relația dintre parametrii de reglare poate fi sintetizată astfel:
-
-\begin{table}[H]
-\centering
-\caption{Efectul parametrilor de reglare asupra comportamentului filtrului.}
-\label{tab:tuning}
-\begin{tabular}{l c c}
-\toprule
-\textbf{Configurație} & \textbf{Răspuns} & \textbf{Netezie} \\
-\midrule
-$Q$ mic, $R$ mare & Lent & Neted \\
-$Q$ mare, $R$ mic & Rapid & Zgomotos \\
-$Q \approx R$ & Echilibrat & Moderat \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Alegerea optimă depinde de aplicație: pentru o mână robotică care trebuie să urmărească mișcări umane rapide, se preferă un compromis cu răspuns relativ rapid, acceptând un nivel moderat de zgomot care este absorbit de inerția mecanică a servomotoarelor.
-
-\section{Aritmetica Q16.16 în virgulă fixă}
-\label{sec:fixed_point}
-
-Circuitele FPGA nu dispun în general de unități de calcul în virgulă mobilă. Prin urmare, toate calculele filtrului Kalman trebuie efectuate în aritmetică cu virgulă fixă. Această secțiune prezintă formatul Q16.16 și justifică alegerea acestuia.
-
-\subsection{Formatul de reprezentare}
-
-Formatul Q16.16 utilizează un cuvânt de 32 de biți cu semn, în care:
-
-\begin{itemize}
-	\item \textbf{Biții 31:16} (16 biți) --- partea întreagă, inclusiv bitul de semn (complement față de 2);
-	\item \textbf{Biții 15:0} (16 biți) --- partea fracționară.
-\end{itemize}
-
-Reprezentarea internă a unui număr real $v$ este:
-\begin{equation}
-\label{eq:q16_repr}
-v_\text{Q16.16} = \lfloor v \times 2^{16} \rfloor = \lfloor v \times 65\,536 \rfloor
-\end{equation}
-
-Rezoluția (cel mai mic increment reprezentabil) este:
-\begin{equation}
-\varepsilon = 2^{-16} = \frac{1}{65\,536} \approx 1{,}53 \times 10^{-5}
-\end{equation}
-
-Domeniul de reprezentare este:
-\begin{equation}
--2^{15} \leq v < 2^{15} - 2^{-16}, \quad \text{adică} \quad -32\,768 \leq v < 32\,767{,}999985
-\end{equation}
-
-\subsection{Exemple de conversie}
-
-Tabelul~\ref{tab:q16_examples} prezintă conversia câtorva valori relevante pentru filtrul Kalman.
-
-\begin{table}[H]
-\centering
-\caption{Exemple de reprezentare în format Q16.16.}
-\label{tab:q16_examples}
-\begin{tabular}{l r r}
-\toprule
-\textbf{Valoare reală} & \textbf{Calcul} & \textbf{Reprezentare Q16.16} \\
-\midrule
-1{,}0 & $1{,}0 \times 65\,536$ & 65\,536 \\
-0{,}02 ($\Delta t$) & $0{,}02 \times 65\,536$ & 1\,311 \\
-0{,}01 ($Q_{00}$) & $0{,}01 \times 65\,536$ & 655 \\
-0{,}1 ($Q_{11}$) & $0{,}1 \times 65\,536$ & 6\,554 \\
-10{,}0 ($P_\text{init}$) & $10{,}0 \times 65\,536$ & 655\,360 \\
-180{,}0 & $180{,}0 \times 65\,536$ & 11\,796\,480 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Operații aritmetice}
-
-\subsubsection{Adunarea și scăderea}
-
-Adunarea și scăderea a două numere Q16.16 se realizează direct, fără operații suplimentare:
-\begin{equation}
-(a + b)_\text{Q16.16} = a_\text{Q16.16} + b_\text{Q16.16}
-\end{equation}
-
-Aceasta funcționează deoarece ambii operanzi au același factor de scală $2^{16}$.
-
-\subsubsection{Înmulțirea}
-
-Înmulțirea a două numere Q16.16 produce un rezultat pe 64 de biți cu 32 de biți fracționari:
-\begin{equation}
-a_\text{Q16.16} \times b_\text{Q16.16} = (a \times 2^{16}) \times (b \times 2^{16}) = a \times b \times 2^{32}
-\end{equation}
-
-Pentru a reveni la formatul Q16.16 (factor de scală $2^{16}$), rezultatul pe 64 de biți trebuie deplasat la dreapta cu 16 biți:
-\begin{equation}
-\label{eq:q16_mul}
-(a \times b)_\text{Q16.16} = \frac{a_\text{Q16.16} \times b_\text{Q16.16}}{2^{16}} = (a_\text{Q16.16} \times b_\text{Q16.16}) \gg 16
-\end{equation}
-
-Echivalent, se extrag biții $[47:16]$ din produsul pe 64 de biți. Biții $[15:0]$ sunt biți fracționari suplimentari (precizie pierdută prin trunchiere), iar biții $[63:48]$ sunt extensia de semn.
-
-\subsubsection{Împărțirea}
-
-Pentru a menține precizia la împărțire, deîmpărțitul trebuie pre-deplasat la stânga cu 16 biți:
-\begin{equation}
-\label{eq:q16_div}
-\left(\frac{a}{b}\right)_\text{Q16.16} = \frac{a_\text{Q16.16} \ll 16}{b_\text{Q16.16}}
-\end{equation}
-
-Această pre-deplasare compensează faptul că împărțirea întreagă ar pierde partea fracționară. Operandul $a_\text{Q16.16} \ll 16$ necesită o reprezentare pe 48 de biți pentru a evita depășirea.
-
-\subsection{Justificarea alegerii Q16.16 față de Q8.8}
-
-Un format mai compact, Q8.8 (16 biți, 8 biți întregi + 8 biți fracționari), ar fi insuficient. Domeniul întreg al formatului Q8.8 cu semn este $[-128, 127]$. Reprezentarea valorii maxime de unghi:
-
-\begin{equation}
-180_\text{Q8.8} = 180 \times 2^8 = 180 \times 256 = 46\,080
-\end{equation}
-
-Aceasta depășește valoarea maximă a unui întreg pe 16 biți cu semn ($2^{15} - 1 = 32\,767$), provocând o depășire (\textit{overflow}).
-
-În schimb, formatul Q16.16:
-\begin{equation}
-180_\text{Q16.16} = 180 \times 65\,536 = 11\,796\,480
-\end{equation}
-
-Această valoare se încadrează confortabil în domeniul unui întreg pe 32 de biți cu semn ($2^{31} - 1 = 2\,147\,483\,647$).
-
-De asemenea, rezoluția fracționară a formatului Q8.8 este $2^{-8} = 0{,}00391$, ceea ce ar introduce erori de cuantizare semnificative în calculele covarianței, unde valori precum $Q_{00} = 0{,}01$ ar fi reprezentate cu o eroare relativă de $\sim 2{,}5\%$. Formatul Q16.16, cu rezoluția de $2^{-16} \approx 0{,}0000153$, reduce această eroare la $\sim 0{,}001\%$.
-
-\section{Interfața SPI și convertorul AD7124-8}
-\label{sec:spi_adc}
-
-Bucla de feedback a sistemului utilizează un convertor analog-digital de înaltă rezoluție conectat prin interfața serială sincronă SPI (\textit{Serial Peripheral Interface}).
-
-\subsection{Protocolul SPI --- Modul 3}
-
-Interfața SPI definește patru semnale: SCLK (ceas), MOSI (date master $\to$ slave), MISO (date slave $\to$ master) și CS (selecție chip, activ pe nivel logic „0"). Există patru moduri de operare, definite de polaritatea ceasului (CPOL) și faza datelor (CPHA).
-
-Convertorul AD7124-8 operează în \textbf{Modul~3} (CPOL = 1, CPHA = 1):
-
-\begin{table}[H]
-\centering
-\caption{Caracteristicile SPI Mod~3.}
-\label{tab:spi_mode3}
-\begin{tabular}{l l}
-\toprule
-\textbf{Parametru} & \textbf{Valoare} \\
-\midrule
-CPOL (Clock Polarity) & 1 --- SCLK în repaus la nivel logic „1" \\
-CPHA (Clock Phase) & 1 --- datele sunt valide pe frontul crescător al SCLK \\
-Modificare date & Pe frontul descrescător al SCLK \\
-Eșantionare date & Pe frontul crescător al SCLK \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Transferul se realizează cu bitul cel mai semnificativ (MSB) primul. Frecvența SCLK este derivată din ceasul de sistem prin divizare:
-\begin{equation}
-f_\text{SCLK} = \frac{f_\text{clk}}{N_\text{div}} = \frac{100\text{ MHz}}{20} = 5\text{ MHz}
-\end{equation}
-
-Această frecvență respectă limita maximă specificată de convertorul AD7124-8 și oferă un transfer de 8 biți în $8 \times 200\text{ ns} = 1{,}6~\mu\text{s}$.
-
-\subsection{Convertorul AD7124-8}
-
-AD7124-8 este un convertor analog-digital de tip sigma-delta ($\Sigma\Delta$) cu următoarele caracteristici relevante:
-
-\begin{itemize}
-	\item \textbf{Rezoluție}: 24 de biți, oferind o gamă dinamică de $2^{24} = 16\,777\,216$ niveluri de cuantizare;
-	\item \textbf{Canale}: 8 canale analogice independente, câte unul pentru fiecare servomotor;
-	\item \textbf{Mod de conversie}: conversie continuă (\textit{continuous conversion mode}), în care convertorul efectuează conversii succesive fără intervenția masterului;
-	\item \textbf{Filtru digital}: sinc$^3$, cu rata de ieșire configurabilă la 50~Hz (corespunzând ciclului de control de 20~ms).
-\end{itemize}
-
-\subsection{Modul DATA\_STATUS}
-
-În modul \texttt{DATA\_STATUS}, fiecare citire a registrului de date returnează 4 octeți în loc de 3:
-
-\begin{table}[H]
-\centering
-\caption{Formatul citirii în modul DATA\_STATUS.}
-\label{tab:data_status}
-\begin{tabular}{c l l}
-\toprule
-\textbf{Octet} & \textbf{Conținut} & \textbf{Descriere} \\
-\midrule
-0 & DATA[23:16] & Octetul superior al conversiei \\
-1 & DATA[15:8] & Octetul median al conversiei \\
-2 & DATA[7:0] & Octetul inferior al conversiei \\
-3 & STATUS & Registru de stare: biții 3:0 = ID canal \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Identificatorul de canal (biții $[3:0]$ din octetul de stare) permite masterului să determine automat cărei intrări analogice îi corespunde conversia curentă, eliminând necesitatea secvenționării manuale a canalelor.
-
-\subsection{Conversia ADC $\rightarrow$ unghi}
-
-Valoarea brută pe 24 de biți, în configurație unipolară ($0 \leq \text{adc\_raw} < 2^{24}$), trebuie convertită în unghiul de poziție al servomotorului ($0$--$180$\textdegree). Conversia liniară este:
-
-\begin{equation}
-\label{eq:adc_to_angle}
-\alpha = \frac{\text{adc\_raw} \times 180}{2^{24}}
-\end{equation}
-
-Această operație se implementează eficient prin:
-\begin{equation}
-\alpha = (\text{adc\_raw} \times 180) \gg 24
-\end{equation}
-
-unde $\gg 24$ denotă deplasarea la dreapta cu 24 de biți, echivalentă cu împărțirea întreagă la $2^{24}$. Produsul $\text{adc\_raw} \times 180$ necesită cel mult $24 + 8 = 32$ de biți, încadrându-se într-un registru standard.
-
-Rezoluția unghiulară a conversiei ADC este:
-\begin{equation}
-\Delta\alpha_\text{ADC} = \frac{180}{2^{24}} \approx 1{,}07 \times 10^{-5}\text{\textdegree}
-\end{equation}
-
-Această rezoluție depășește cu mai multe ordine de mărime precizia mecanică a servomotoarelor, astfel încât cuantizarea ADC nu constituie o sursă semnificativă de eroare.
-
-\section{Bugetul de timp}
-\label{sec:timing_budget}
-
-Această secțiune analizează cantitativ fezabilitatea prelucrării tuturor celor 8 canale de servo în cadrul unui singur ciclu de control de 20~ms.
-
-\subsection{Costul computațional per canal}
-
-Algoritmul Kalman derivat în Secțiunea~\ref{sec:kalman} necesită, pentru fiecare canal de servo, următoarele operații aritmetice:
-
-\begin{table}[H]
-\centering
-\caption{Inventarul operațiilor aritmetice per canal de servo.}
-\label{tab:operation_count}
-\begin{tabular}{l c c c}
-\toprule
-\textbf{Etapa} & \textbf{Înmulțiri} & \textbf{Împărțiri} & \textbf{Adunări/scăderi} \\
-\midrule
-Predicție stare (ec.~\ref{eq:x_pred}) & 1 & 0 & 1 \\
-Predicție covarianță (ec.~\ref{eq:pp00}--\ref{eq:pp11}) & 3 & 0 & 5 \\
-Inovație (ec.~\ref{eq:innovation}) & 0 & 0 & 1 \\
-Covarianță inovație (ec.~\ref{eq:innovation_cov}) & 0 & 0 & 1 \\
-Câștig Kalman (ec.~\ref{eq:K0}--\ref{eq:K1}) & 0 & 2 & 0 \\
-Actualizare stare (ec.~\ref{eq:x0_update}--\ref{eq:x1_update}) & 2 & 0 & 2 \\
-Actualizare covarianță (ec.~\ref{eq:p00_update}--\ref{eq:p11_update}) & 3 & 0 & 4 \\
-Conversie ieșire (Q16.16 $\to$ unghi) & 0 & 0 & 0 \\
-Încărcare/stocare RAM & 5 & 0 & 0 \\
-\midrule
-\textbf{Total} & \textbf{14} & \textbf{2} & \textbf{14} \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Estimarea numărului de cicluri de ceas presupune:
-\begin{itemize}
-	\item Înmulțirea Q16.16: $\sim$4 cicluri (incluzând acumularea pe 64 de biți și deplasarea);
-	\item Împărțirea Q16.16: $\sim$35 cicluri (împărțire secvențială pe 48 de biți);
-	\item Adunarea/scăderea: 1 ciclu.
-\end{itemize}
-
-Costul total per canal:
-\begin{equation}
-C_\text{canal} = 14 \times 4 + 2 \times 35 + 14 \times 1 = 56 + 70 + 14 = 140 \text{ cicluri}
-\end{equation}
-
-Adăugând cicluri auxiliare (încărcare registre, secvențiere FSM, latență de acces la RAM), estimarea crește la aproximativ $\sim$182 de cicluri per canal.
-
-\subsection{Bugetul total pentru 8 canale}
-
-\begin{equation}
-C_\text{total} = 8 \times 182 = 1\,456 \text{ cicluri de ceas}
-\end{equation}
-
-Bugetul de timp disponibil per ciclu de control:
-\begin{equation}
-N_\text{disponibil} = f_\text{clk} \times T_\text{ciclu} = 100 \times 10^6 \times 0{,}02 = 2\,000\,000 \text{ cicluri}
-\end{equation}
-
-Gradul de utilizare:
-\begin{equation}
-U = \frac{C_\text{total}}{N_\text{disponibil}} = \frac{1\,456}{2\,000\,000} = 0{,}073\% \approx 0{,}07\%
-\end{equation}
-
-\subsection{Marja de siguranță și extensibilitate}
-
-Gradul de utilizare de $0{,}07\%$ lasă o marjă enormă --- peste $99{,}9\%$ din ciclurile de ceas disponibile sunt neutilizate. Această marjă permite:
-
-\begin{enumerate}
-	\item \textbf{Extinderea la filtru Kalman cu 3 stări}: Adăugarea accelerației ca a treia variabilă de stare crește matricea $\mathbf{P}$ de la $2 \times 2$ la $3 \times 3$ (6 elemente unice, datorită simetriei), iar costul computațional crește la aproximativ 45 de înmulțiri și 3 împărțiri per canal. Chiar în acest caz, totalul pentru 8 canale rămâne sub 5\,000 de cicluri --- încă neglijabil față de bugetul de 2\,000\,000.
-
-	\item \textbf{Adăugarea de funcții suplimentare}: Generatoare de rampe de accelerare, limitatoare de curent, sau algoritmi de detectare a coliziunilor ar putea fi integrate fără a compromite respectarea ciclului de 20~ms.
-
-	\item \textbf{Reducerea frecvenței de ceas}: Dacă consumul de putere devine o constrângere, ceasul ar putea fi redus substanțial (de exemplu, la 10~MHz) menținând în continuare un buget de timp suficient ($200\,000$ cicluri vs.\ ${\sim}1\,500$ necesare).
-\end{enumerate}
-
-Această analiză confirmă că abordarea de prelucrare secvențială (un canal la un moment dat, multiplexat în timp) este viabilă și nu necesită paralelizare hardware, simplificând semnificativ arhitectura și reducând consumul de resurse FPGA.
-
-
-\vspace{1cm}
+%
+ceea ce înseamnă că la unghiul de 0 grade durata este de 1~ms, iar la 180 de grade
+durata ajunge la 2~ms. Această durată trebuie tradusă într-un număr de perioade de
+ceas, fiindcă generatorul PWM din interiorul plăcii numără impulsuri de ceas pentru
+a măsura timpul. La frecvența de ceas a sistemului, de 100~MHz, o perioadă de ceas
+durează 10 nanosecunde, astfel încât perioada completă de 20~ms corespunde la exact
+două milioane de perioade de ceas, iar intervalul util al impulsului, de la 1 la
+2~ms, se întinde pe o sută de mii de perioade de ceas.
+
+Generatorul PWM funcționează pe baza unui numărător care parcurge ciclic valorile
+corespunzătoare unei perioade de 20~ms. La fiecare ciclu, pentru fiecare canal, se
+calculează un prag corespunzător unghiului dorit, iar ieșirea se menține la nivel
+ridicat atâta timp cât numărătorul este sub acest prag și coboară la nivel scăzut
+în rest. Astfel, durata impulsului activ este proporțională cu unghiul, exact cum
+cere servomotorul. Rezoluția obținută în acest fel este mult mai fină decât
+precizia mecanică a servomotorului, ceea ce înseamnă că pasul de cuantizare al
+comenzii nu constituie un factor limitativ pentru precizia ansamblului. Faptul că
+fiecare dintre cele opt canale dispune de propriul comparator, toate funcționând în
+paralel, asigură generarea simultană a tuturor semnalelor, fără ca actualizarea
+unui canal să o afecteze pe a celorlalte.
+
+\section{Analiza temporală și sincronizarea}
+\label{sec:analiza-timp}
+
+Un sistem de control în timp real nu poate fi judecat doar după corectitudinea
+algoritmilor, ci și după capacitatea de a-i executa în intervalul de timp
+disponibil. Această secțiune analizează constrângerile temporale ale sistemului și
+modul în care diferitele subsisteme, care lucrează la ritmuri foarte diferite, sunt
+sincronizate între ele. Toate aceste aspecte pornesc de la ceasul de sistem al
+plăcii, care funcționează la 100~MHz, ceea ce înseamnă o perioadă de ceas de exact
+10 nanosecunde. Fiecare operație elementară din circuit se desfășoară pe parcursul
+unuia sau mai multor astfel de intervale.
+
+Referința temporală a întregului sistem este ciclul de control de 20~ms, impus de
+servomotoare. La frecvența de 100~MHz, acest ciclu corespunde la exact două
+milioane de perioade de ceas, fiindcă produsul dintre frecvență și durată dă
+$100 \times 10^6 \times 0{,}02 = 2\,000\,000$. Acesta este, practic, bugetul de
+timp în interiorul căruia trebuie să încapă toate operațiile dintr-un ciclu, de la
+recepția datelor până la actualizarea semnalelor de ieșire. Cum se va vedea, acest
+buget este extrem de generos în raport cu necesarul real de calcul.
+
+\subsection{Sincronizarea datelor între subsisteme}
+
+O dificultate aparte a sistemului provine din faptul că subsistemele sale lucrează
+la ritmuri diferite și independente. Pe de o parte, cadrele cu unghiuri sosesc prin
+UART la momente dictate de calculatorul gazdă și de procesul de detecție vizuală,
+fără nicio legătură cu ciclul intern al plăcii. Pe de altă parte, filtrul Kalman și
+generatorul PWM lucrează strict ritmate de ciclul de 20~ms. Dacă filtrul ar citi
+direct datele în curs de recepție, ar exista riscul ca un cadru să fie folosit pe
+jumătate actualizat, în momentul în care un nou set de valori tocmai îl
+suprascrie pe cel vechi, ceea ce ar produce comenzi eronate.
+
+Pentru a evita această situație, între modulul de recepție și filtru a fost
+introdus un mecanism de tip cutie poștală, care funcționează pe principiul dublului
+tampon. Cadrele primite prin UART sunt scrise într-un prim registru, pe măsură ce
+sosesc, și sunt însoțite de un fanion care indică prezența unor date noi.
+Filtrul Kalman nu citește însă niciodată din acest registru direct. La începutul
+fiecărui ciclu de 20~ms, dacă există date noi disponibile, conținutul primului
+registru este copiat dintr-o singură mișcare într-un al doilea registru, din care
+filtrul își preia valorile pe parcursul ciclului. În acest fel, filtrul lucrează
+întotdeauna pe un set de date stabil și coerent, în timp ce recepția poate continua
+nestingherită în fundal. Acest mecanism decuplează complet ritmul comunicației de
+ritmul prelucrării și constituie elementul-cheie al sincronizării din sistem.
+
+\subsection{Constrângerea impusă de convertorul analog-digital}
+
+Și bucla de monitorizare prin convertorul analog-digital impune constrângeri
+temporale proprii. Convertorul folosit este de tip sigma-delta, un tip de convertor
+care obține o rezoluție foarte mare în schimbul unei rate de conversie mai
+moderate. În configurația aleasă, cu un filtru digital de tip sinc de ordinul al
+treilea, rata de ieșire a convertorului este de 50 de eșantioane pe secundă, ceea
+ce se potrivește exact cu ciclul de control de 20~ms. Cu alte cuvinte, convertorul
+furnizează o nouă măsurătoare de poziție pentru fiecare ciclu al sistemului, nici
+mai des, nici mai rar decât este nevoie.
+
+Comunicația cu convertorul se realizează prin interfața SPI, a cărei frecvență de
+ceas a fost stabilită la 5~MHz, obținută prin divizarea ceasului de sistem de
+100~MHz. Această valoare se încadrează confortabil sub limita maximă admisă de
+convertor și asigură un transfer rapid al celor câțiva octeți necesari pentru
+citirea unei conversii. Un detaliu important al acestei interfețe este sincronizarea
+semnalului de intrare provenit de la convertor. Deoarece acest semnal vine dintr-un
+domeniu de timp diferit față de ceasul plăcii, el este trecut prin două bistabile
+înseriate înainte de a fi folosit, o tehnică standard prin care se evită fenomenul
+de metastabilitate, care ar putea altfel introduce valori eronate atunci când
+semnalul se schimbă chiar în momentul citirii.
+
+\subsection{Bugetul de calcul al filtrului Kalman}
+
+Cea mai solicitantă operație din punct de vedere temporal este execuția filtrului
+Kalman pentru toate cele opt canale. Filtrul este implementat ca o mașină cu stări,
+care parcurge secvențial etapele de predicție și actualizare pentru fiecare canal,
+efectuând o singură înmulțire pe ciclu de ceas pentru a respecta constrângerile de
+timp. Operația cea mai costisitoare este împărțirea necesară la calculul câștigului
+Kalman, realizată printr-un algoritm secvențial care produce câte un bit de rezultat
+pe ciclu de ceas și necesită câteva zeci de cicluri pentru a se finaliza. Întrucât
+pentru fiecare canal sunt necesare două astfel de împărțiri, prelucrarea unui singur
+canal ocupă de ordinul a o sută cincizeci de cicluri de ceas, iar tratarea tuturor
+celor opt canale necesită, în total, aproximativ o mie două sute de cicluri.
+
+La o perioadă de ceas de 10 nanosecunde, acest necesar se traduce într-un timp de
+calcul de ordinul a 12 până la 13 microsecunde pentru întregul set de canale.
+Trebuie subliniat că această valoare este o estimare, nu o cifră fixă, deoarece
+numărul exact de cicluri variază de la un ciclu la altul. Atunci când o măsurătoare
+diferă foarte mult de predicție, filtrul ocolește o parte din calcule și reia
+estimarea, iar algoritmul de împărțire poate să se încheie mai devreme în anumite
+situații. Indiferent de aceste variații însă, timpul de calcul rămâne de ordinul
+microsecundelor, cu mult sub bugetul de 20 de milisecunde disponibil pentru un
+ciclu. Practic, filtrul ocupă o fracțiune neglijabilă din timpul unui ciclu, ceea
+ce lasă o marjă uriașă pentru eventuale extinderi viitoare ale sistemului.
+
+Din această analiză rezultă o observație importantă. Constrângerea reală a
+sistemului nu este debitul de calcul, care este oricum acoperit cu prisosință, ci
+închiderea temporală a circuitului la frecvența de 100~MHz. Cu alte cuvinte,
+provocarea nu constă în a încadra calculele în cele 20~ms, lucru evident
+îndeplinit, ci în a asigura că fiecare operație elementară se încheie în interiorul
+unei singure perioade de ceas de 10 nanosecunde, astfel încât circuitul să poată
+funcționa stabil la această frecvență. Operația de împărțire, în special, ridică
+dificultăți în acest sens, fiindcă o realizare directă a ei ar avea o cale
+combinațională prea lungă pentru a se încadra într-o perioadă de ceas. Modul în
+care această problemă a fost rezolvată, prin descompunerea împărțirii pe mai multe
+cicluri și prin alte tehnici de reducere a căilor combinaționale, este tratat în
+detaliu în capitolul de proiectare și implementare.
+
+\section{Fundamentarea alegerii componentelor}
+\label{sec:analiza-componente}
+
+Ultima parte a acestui capitol tratează raționamentul teoretic care a stat la baza
+alegerii principalelor componente electronice ale sistemului. Spre deosebire de
+descrierea concretă a montajului, care aparține capitolului de proiectare, aici sunt
+discutate principiile care au impus utilizarea fiecărui tip de componentă. Un fir
+roșu al acestor decizii îl reprezintă protejarea părții digitale a sistemului și
+asigurarea unei alimentări curate, în condițiile în care motoarele introduc
+perturbații importante.
+
+\subsection{Necesitatea izolării galvanice}
+
+Cea mai importantă decizie de proiectare la nivel electronic este separarea
+domeniului digital de cel de putere prin izolare galvanică. Placa FPGA lucrează cu
+semnale logice de mică putere și este sensibilă la perturbații, în timp ce
+servomotoarele consumă curenți importanți și produc, prin natura motoarelor
+electrice, vârfuri de tensiune și zgomot electric atunci când pornesc, se opresc
+sau întâmpină rezistență. Dacă cele două domenii ar împărți aceeași masă electrică,
+aceste perturbații s-ar propaga înapoi în placă și ar putea provoca funcționări
+eronate sau chiar deteriorarea circuitului. Izolarea galvanică întrerupe complet
+legătura electrică directă dintre cele două domenii, permițând totuși transmiterea
+semnalelor, astfel încât informația trece dintr-o parte în alta fără ca
+perturbațiile de putere să poată ajunge la partea sensibilă.
+
+Pentru izolarea celor opt semnale PWM care comandă servomotoarele se folosesc
+izolatoare digitale de tip ADuM1400. Acestea
+sunt izolatoare cu patru canale, bazate pe tehnologia iCoupler, în care semnalul
+este transmis peste bariera de izolare prin intermediul unor transformatoare
+miniaturale integrate în cip, nu prin cuplaj optic precum la optocuploarele
+clasice. Structura internă a circuitului este ilustrată în
+Figura~\ref{fig:adum-diagrama}, unde se observă cele patru canale, fiecare format
+dintr-un bloc de codare, un transformator care realizează trecerea peste bariera
+de izolare și un bloc de decodare. Această tehnologie oferă un consum redus și o
+stabilitate bună în timp. Deoarece un singur circuit dispune de patru canale, iar
+sistemul are nevoie de opt semnale PWM, se folosesc două astfel de circuite, care
+împreună acoperă toate cele opt canale de comandă către servomotoare.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.7\textwidth]{figs/adi_adum_diagrama.png}
+	\caption{Structura internă a izolatorului ADuM1400, cu cele patru canale.
+	Fiecare canal transmite semnalul peste bariera de izolare printr-un
+	transformator miniatural, conform tehnologiei iCoupler.}
+	\label{fig:adum-diagrama}
+\end{figure}
+
+Pentru testarea și integrarea acestor izolatoare a fost folosită placa de
+evaluare prezentată în Figura~\ref{fig:adum-eval}, pe care se montează circuitul
+propriu-zis și care expune toate conexiunile necesare, ușurând astfel realizarea
+montajului experimental.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.6\textwidth]{figs/adi_adum_eval.jpg}
+	\caption{Placa de evaluare pe care se montează izolatorul ADuM1400, cu
+	conexiunile aduse la borne accesibile pentru integrarea în montaj.}
+	\label{fig:adum-eval}
+\end{figure}
+
+Bucla de monitorizare prin convertorul analog-digital trebuie la rândul ei izolată,
+fiindcă altfel ar reintroduce o legătură directă între domeniul de putere și placă,
+anulând efectul izolării de pe calea de comandă. Magistrala SPI prin care
+comunică convertorul este izolată cu ajutorul circuitului MAX14850, prezentat în
+Figura~\ref{fig:max}. Acesta este un izolator digital cu șase canale, dintre care
+patru unidirecționale și două bidirecționale, ceea ce îl face deosebit de potrivit
+pentru izolarea unei magistrale SPI, care necesită mai multe linii de semnal în
+ambele sensuri. Astfel, întregul lanț de feedback rămâne separat galvanic de partea
+de putere, păstrând integritatea izolării întregului sistem.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.45\textwidth]{figs/adi_max14850.png}
+	\caption{Izolatorul digital cu șase canale MAX14850, folosit pentru izolarea
+	magistralei SPI dintre convertorul analog-digital și placa FPGA.}
+	\label{fig:max}
+\end{figure}
+
+\subsection{Convertorul analog-digital de precizie}
+
+Citirea poziției reale a servomotoarelor necesită un convertor analog-digital
+capabil să măsoare cu precizie tensiuni mici, eventual afectate de zgomot. Pentru
+acest rol a fost ales convertorul AD7124-8, prezentat în Figura~\ref{fig:ad7124}.
+Este un convertor de tip sigma-delta cu o rezoluție de 24 de biți, ceea ce îi
+conferă o gamă dinamică foarte mare și o sensibilitate ridicată. Spre deosebire de
+convertoarele rapide, cu aproximații succesive, un convertor sigma-delta obține
+această precizie ridicată prin supraeșantionare și filtrare digitală, fiind ideal
+pentru semnale care variază lent, așa cum este poziția unui servomotor. Convertorul
+dispune de mai multe canale de intrare, ceea ce permite citirea mai multor
+servomotoare cu un singur circuit, și de un filtru digital configurabil, prin care
+rata de conversie a fost potrivită exact cu ciclul de control al sistemului.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.5\textwidth]{figs/adi_ad7124.png}
+	\caption{Convertorul analog-digital sigma-delta pe 24 de biți AD7124-8, folosit
+	pentru citirea poziției reale a servomotoarelor.}
+	\label{fig:ad7124}
+\end{figure}
+
+\subsection{Alimentarea sistemului}
+
+Funcționarea corectă a întregului ansamblu depinde și de o alimentare bine
+dimensionată, capabilă să furnizeze atât curentul mare cerut de servomotoare, cât
+și o tensiune curată pentru partea sensibilă de măsurare. Cele opt servomotoare,
+mai ales atunci când acționează simultan sub sarcină, solicită un curent
+considerabil, motiv pentru care alimentarea lor se face printr-un regulator capabil
+de un curent ridicat, realizat cu modulul DC2468A, prezentat în
+Figura~\ref{fig:dc2468a}. Acesta coboară tensiunea sursei la valoarea de 5~V cerută
+de servomotoare, furnizând un curent suficient pentru ca toate motoarele să poată
+funcționa simultan fără căderi de tensiune.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.5\textwidth]{figs/adi_dc2468a.png}
+	\caption{Modulul de alimentare DC2468A, care furnizează tensiunea de 5~V și
+	curentul ridicat necesar celor opt servomotoare.}
+	\label{fig:dc2468a}
+\end{figure}
+
+Convertorul analog-digital, fiind un circuit de precizie, necesită o alimentare cât
+mai curată, lipsită de zgomot. Pentru aceasta se folosește un regulator liniar de
+tip ADP165, prezentat în Figura~\ref{fig:adp165}, care coboară tensiunea de 5~V la
+cea de 3,3~V folosită de convertor. Spre deosebire de regulatoarele în comutație,
+care sunt eficiente dar introduc zgomot, un regulator liniar furnizează o tensiune
+foarte stabilă și curată, esențială pentru a nu compromite precizia măsurătorilor
+convertorului. În felul acesta, fiecare parte a sistemului primește exact tipul de
+alimentare de care are nevoie, partea de putere fiind alimentată eficient, iar cea
+de măsurare fiind alimentată curat.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.45\textwidth]{figs/adi_adp165.png}
+	\caption{Regulatorul liniar ADP165, care furnizează tensiunea curată de 3,3~V
+	necesară convertorului analog-digital.}
+	\label{fig:adp165}
+\end{figure}
+
+\vspace{0.5cm}
 \noindent
-Fundamentele teoretice prezentate în acest capitol --- protocolul de comunicație, algoritmul de generare PWM, filtrul Kalman cu demonstrație completă, aritmetica în virgulă fixă, interfața cu convertorul analog-digital și analiza bugetului de timp --- constituie baza pentru proiectarea detaliată și implementarea hardware descrise în capitolul următor.
+Fundamentele teoretice prezentate în acest capitol, de la structura logică a
+sistemului și principiul de acționare a mâinii, până la modelul filtrului Kalman,
+aritmetica folosită, controlul servomotoarelor, analiza temporală și raționamentul
+alegerii componentelor, constituie baza pe care se sprijină proiectarea de detaliu.
+Capitolul următor reia aceste elemente din perspectiva implementării concrete,
+arătând cum au fost transpuse în structura hardware a plăcii și în ansamblul fizic
+al mâinii robotice.
