@@ -1,153 +1,89 @@
-\chapter{Concluzii}\label{ch:concluzii}
+\chapter{Concluzii}
+\label{ch:concluzii}
 \pagestyle{fancy}
 
-%==========================================================================
-\section{Contribuții}
-\label{sec:contributii}
+Lucrarea de față a pornit de la dorința de a realiza ceva concret și spectaculos, o
+mână robotică ce reproduce în timp real mișcările mâinii umane, și a parcurs întregul
+drum de la idee până la un sistem funcțional. Pe parcurs, proiectul a îmbinat domenii
+foarte diferite, de la mecanica acționării prin tendoane și fabricarea prin printare 3D,
+până la proiectarea digitală pe FPGA, filtrarea Kalman și electronica de izolare și
+alimentare. Fiecare dintre aceste etape a venit cu propriile provocări, iar rezolvarea
+lor, pas cu pas, a transformat un ansamblu de modele și componente disparate într-un
+sistem unitar care funcționează.
 
-Prezenta lucrare a realizat proiectarea și implementarea completă a unui
-sistem de control FPGA pentru o mână robotică cu 8~servomotoare, integrând
-filtrare Kalman pentru stabilizarea mișcării. Principalele contribuții sunt:
+\section{Aportul personal al lucrării}
+\label{sec:concluzii-contributii}
 
-\begin{enumerate}
-	\item \textbf{Control în timp real pe FPGA cu filtrare Kalman.}
-	      S-a implementat un filtru Kalman cu 2~stări (poziție și viteză) în
-	      aritmetică virgulă fixă Q16.16, multiplexat în timp pe 8~canale.
-	      Filtrul estimează optimal traiectoria fiecărui servomotor pe baza
-	      măsurătorilor zgomotoase, reducând fluctuațiile cu un factor de
-	      4--6$\times$ comparativ cu controlul direct. Întregul ciclu de
-	      filtrare pentru cele 8~canale se execută în aproximativ 1\,456
-	      cicluri de ceas (14,6\,$\mu$s), reprezentând doar 0,07\% din
-	      bugetul temporal disponibil de 20\,ms.
+Contribuția centrală a acestei lucrări o reprezintă partea de control implementată pe
+placa FPGA, în care unghiurile primite de la sistemul de viziune sunt filtrate și
+transformate în comenzi pentru servomotoare. În jurul acestei părți a fost dezvoltat un
+filtru Kalman cu două stări, implementat integral în aritmetică cu virgulă fixă Q16.16,
+capabil să prelucreze toate cele opt canale în interiorul unui singur ciclu de control.
+Adaptarea modelului teoretic al filtrului la constrângerile unei platforme fără unitate
+în virgulă mobilă, precum și încadrarea întregii logici în constrângerile temporale ale
+unui circuit de 100~MHz, constituie principalul aport tehnic al lucrării.
 
-	\item \textbf{Generare PWM paralelă pe 8~canale.} Cele 8~semnale PWM
-	      sunt generate simultan de instanțe hardware independente, fără
-	      multiplexare în timp. Aceasta elimină jitter-ul de interleaving
-	      specific implementărilor bazate pe microcontroler, rezultând o
-	      precizie temporală de 10\,ns (un ciclu de ceas) pe fiecare canal.
+Pe lângă filtru, a fost proiectat un întreg lanț de prelucrare, de la recepția și
+validarea cadrelor prin UART, mecanismul de sincronizare de tip cutie poștală și
+generarea celor opt semnale PWM, până la bucla de monitorizare prin convertorul
+analog-digital. Închiderea temporală a circuitului, obținută prin descompunerea
+operațiilor complexe, prin realizarea împărțirii pe mai multe cicluri și prin
+distribuirea stării filtrului în memorii separate, a reprezentat una dintre cele mai
+solicitante etape și, totodată, una dintre cele mai instructive.
 
-	\item \textbf{Integrarea feedback-ului ADC.} Controlerul AD7124-8
-	      citește poziția reală a celor 8~servomotoare prin potențiometrele
-	      de feedback, furnizând măsurători pe 24~de biți la o rată de
-	      50\,Hz. Aceste măsurători alimentează filtrul Kalman, permițând
-	      estimarea nu doar a poziției, ci și a vitezei de deplasare.
+O contribuție importantă este și realizarea fizică a mâinii, un ansamblu hibrid care
+combină cele mai potrivite elemente din mai multe proiecte open-source, completate cu
+piese proprii, modelate special pentru a face legătura între componente. Montarea
+sistemului de acționare prin fire și arcuri, precum și realizarea unui sistem de
+feedback prin intervenția directă asupra servomotoarelor, au necesitat un volum
+considerabil de muncă practică. Nu în ultimul rând, integrarea componentelor Analog
+Devices, atât pentru izolarea galvanică, cât și pentru achiziția și alimentarea de
+precizie, a adăugat proiectului o dimensiune concretă de proiectare electronică.
 
-	\item \textbf{Mod demonstrativ autonom.} ROM-ul cu 21~de cadre-cheie
-	      permite funcționarea autonomă a sistemului, fără conexiune la un
-	      calculator gazdă, facilitând demonstrarea și testarea rapidă.
+\section{Evaluarea sistemului realizat}
+\label{sec:concluzii-analiza}
 
-	\item \textbf{Arhitectură modulară completă.} Cele 12~module VHDL sunt
-	      proiectate cu interfețe clar definite și pot fi reutilizate
-	      independent în alte proiecte. Gradul scăzut de utilizare a
-	      resurselor FPGA (sub 15\%) lasă marjă substanțială pentru
-	      extinderi ulterioare.
-\end{enumerate}
+Rezultatele obținute confirmă că sistemul își atinge scopul propus. Partea digitală
+funcționează corect și stabil pe placa FPGA, respectând constrângerile temporale, iar
+mâna reproduce mișcările comandate și reușește să prindă și să susțină obiecte reale.
+Un rezultat îmbucurător a fost faptul că integrarea părții mecanice cu cea digitală a
+funcționat de la prima încercare, ceea ce validează abordarea de testare pe niveluri,
+în care fiecare subsistem a fost verificat înainte de a fi adus în ansamblu.
 
-%==========================================================================
-\section{Analiză critică}
-\label{sec:analiza-critica}
+Există, desigur, și limitări. Prinderea este fermă pentru obiectele cu suprafețe care
+oferă aderență, dar mai puțin sigură pentru obiectele netede din plastic lucios, care
+tind să alunece, deoarece degetele nu dispun de un material antiderapant la vârfuri. De
+asemenea, servomotoarele folosite, fiind modele accesibile, prezintă neuniformități care
+au impus calibrări suplimentare, atât la nivelul semnalului PWM, cât și la nivelul
+feedback-ului. Aceste limitări nu afectează funcționarea de ansamblu, dar indică
+direcțiile în care sistemul poate fi îmbunătățit.
 
-\subsection{Puncte forte}
+\section{Direcții viitoare}
+\label{sec:concluzii-dezvoltare}
 
-\begin{itemize}
-	\item \textbf{Latență redusă:} Latența de procesare a FPGA-ului
-	      (de la recepția cadrului UART la actualizarea semnalelor PWM) este
-	      sub 15\,$\mu$s, cu trei ordine de mărime mai mică decât ciclul
-	      servo de 20\,ms. Aceasta garantează că procesarea nu introduce
-	      întârzieri perceptibile.
+O primă direcție de dezvoltare vizează îmbunătățirea prinderii, prin adăugarea unui
+material antiderapant la vârful degetelor, care ar permite manipularea sigură a unei
+game mai largi de obiecte, inclusiv a celor netede. Tot pe partea mecanică, alimentarea
+servomotoarelor la o tensiune mai ridicată, de 6~V, posibilă prin ajustarea modulului de
+alimentare, ar crește cuplul disponibil și forța de strângere. O îmbunătățire și mai
+consistentă ar fi înlocuirea servomotoarelor accesibile actuale cu modele de calitate
+superioară, cu un cuplu mai mare și cu o cursă unghiulară mai amplă, care ar oferi atât
+o forță de prindere sporită, cât și o libertate de mișcare mai apropiată de cea a mâinii
+umane.
 
-	\item \textbf{Paralelism real:} Generarea simultană a tuturor canalelor
-	      PWM, funcționarea concurentă a receptorului UART, a controlerului
-	      SPI și a filtrului Kalman --- toate în același ciclu de ceas ---
-	      demonstrează avantajul fundamental al FPGA față de un procesor
-	      secvențial.
+O altă direcție firească este eliminarea legăturii prin cablu dintre calculator și placă,
+prin transmiterea datelor pe cale radio. Un modul de comunicație fără fir, conectat în
+locul legăturii seriale actuale, ar permite operarea mâinii de la distanță, sporind
+mobilitatea sistemului și apropiindu-l de scenariile reale de teleoperare.
 
-	\item \textbf{Utilizare eficientă a resurselor:} Sistemul complet
-	      ocupă sub 15\% din resursele FPGA-ului Artix-7 XC7A35T, cel mai
-	      mic circuit din familia Artix-7. Aceasta demonstrează că
-	      implementarea este eficientă din punct de vedere al resurselor
-	      hardware.
+Pe partea de control, filtrul Kalman ar putea fi extins la un model cu trei stări, care
+să includă și accelerația, oferind o urmărire mai fidelă a mișcărilor rapide. Marja
+foarte largă de resurse rămase pe circuitul FPGA permite cu ușurință o astfel de
+extindere, fără a compromite respectarea constrângerilor de timp.
 
-	\item \textbf{Robustețe la comunicare:} Protocolul de cadre cu
-	      checksum XOR, timeout de 1\,ms și buffer dublu (mailbox) asigură
-	      funcționarea stabilă chiar și în condiții de comunicare UART
-	      imperfectă.
-\end{itemize}
-
-\subsection{Limitări}
-
-\begin{itemize}
-	\item \textbf{Filtru Kalman cu 2 stări:} Modelul curent nu include
-	      accelerația ca variabilă de stare. Pentru mișcări rapide cu
-	      accelerație variabilă, estimarea poate rămâne în urma mișcării
-	      reale. Un filtru cu 3~stări (poziție, viteză, accelerație) ar
-	      captura mai fidel dinamica mișcărilor brusteri, dar necesită
-	      o matrice de covarianță $3\times3$ (6~elemente unice) în loc de
-	      $2\times2$ (3~elemente).
-
-	\item \textbf{Constante de ajustare fixe:} Constantele filtrului Kalman
-	      ($Q_{00}$, $Q_{11}$, $R$) sunt hardcodate în VHDL și necesită
-	      resinteză pentru modificare. Valorile actuale sunt calculate
-	      teoretic și ar beneficia de calibrare pe hardware-ul real,
-	      eventual cu un mecanism de ajustare în timp real prin UART.
-
-	\item \textbf{Comunicare doar prin cablu:} Sistemul depinde de o
-	      conexiune USB cablată pentru comunicarea UART cu calculatorul
-	      gazdă. Aceasta limitează mobilitatea operatorului și introduce
-	      o dependență fizică de proximitatea calculatorului.
-
-	\item \textbf{Configurare ADC fără validare:} Secvența de inițializare
-	      a AD7124-8 scrie registrele de configurare fără a citi înapoi
-	      valorile pentru confirmare. O eroare de comunicare SPI în timpul
-	      inițializării ar putea lăsa ADC-ul într-o stare incorectă fără
-	      detecție.
-\end{itemize}
-
-%==========================================================================
-\section{Dezvoltări ulterioare}
-\label{sec:dezvoltari}
-
-Arhitectura modulară și gradul scăzut de utilizare a resurselor FPGA
-permit mai multe direcții de extindere:
-
-\begin{enumerate}
-	\item \textbf{Filtru Kalman cu 3 stări.} Adăugarea accelerației ca a
-	      treia variabilă de stare ar îmbunătăți urmărirea mișcărilor
-	      rapide. Vectorul de stare devine $[x_0, x_1, x_2]$ (poziție,
-	      viteză, accelerație), iar matricea de covarianță crește de la
-	      $2\times2$ la $3\times3$. Termenul $dt^2/2$ (0,0002 în Q16.16)
-	      necesită o reprezentare cu mai mulți biți fracționari (Q4.28)
-	      pentru a evita pierderea de precizie. Estimarea de resurse indică
-	      45~multiplicări și 3~diviziuni per canal, încadrabile confortabil
-	      în bugetul temporal existent.
-
-	\item \textbf{Comunicare wireless.} Înlocuirea legăturii USB-UART cu
-	      un modul Bluetooth (ex. HC-05) sau WiFi (ex. ESP32) ar permite
-	      operarea la distanță. Modulele \texttt{uart\_rx} și
-	      \texttt{uart\_tx} ar rămâne nemodificate, deoarece aceste module
-	      wireless comunică prin UART standard. Singura modificare ar fi
-	      la nivel de placă, conectând modulul wireless la pinii RsRx/RsTx
-	      în locul convertorului USB-UART integrat.
-
-	\item \textbf{Buclă de control PID.} Combinarea ieșirii filtrului
-	      Kalman (estimarea poziției reale) cu unghiul țintă (din cadrul
-	      UART) într-un controler PID ar permite compensarea activă a
-	      erorilor de poziționare ale servomotoarelor. Eroarea
-	      $e = \theta_{\text{tinta}} - \theta_{\text{Kalman}}$ ar alimenta
-	      un controler PID a cărui ieșire ar ajusta comanda PWM, închizând
-	      bucla de reglare.
-
-	\item \textbf{Clasificare gesturi prin învățare automată.} Integrarea
-	      unui clasificator simplu (rețea neuronală compactă sau arbore
-	      de decizie) implementat în FPGA ar permite recunoașterea gesturilor
-	      direct pe placă, fără a depinde de procesarea MediaPipe pe un
-	      calculator gazdă. Gesturile recunoscute ar putea declanșa secvențe
-	      predefinite, similar modului demo actual, dar bazate pe feedback-ul
-	      ADC în timp real.
-
-	\item \textbf{Extinderea numărului de grade de libertate.} Arhitectura
-	      actuală suportă 8~canale, dar poate fi extinsă la 16 sau mai
-	      multe prin adăugarea de instanțe PWM și extinderea filtrului
-	      Kalman. Resursele FPGA disponibile (peste 85\% neutilizate)
-	      permit dublarea numărului de canale fără dificultăți.
-\end{enumerate}
+În final, cea mai firească direcție de continuare o reprezintă integrarea completă cu
+partea de viziune, astfel încât mâna să urmărească în timp real și în mod robust
+gesturile unui operator. Probele preliminare au arătat că lanțul întreg, de la captura
+video până la mișcarea mâinii, poate funcționa unitar, iar rafinarea acestei integrări ar
+transforma prototipul actual într-un sistem de teleoperare pe deplin funcțional,
+apropiindu-l de scopul care a inspirat această lucrare.
