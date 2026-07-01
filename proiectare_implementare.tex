@@ -363,12 +363,12 @@ această limită, fiecare semnal trece printr-un divizor rezistiv, realizat pe o
 separată. Divizorul folosește o rezistență $R_1 = 100$~k$\Omega$ în calea semnalului și
 una $R_2 = 300$~k$\Omega$ spre masă, conform schemei din Figura~\ref{fig:divizor-schema}.
 Tensiunea de ieșire rezultă din raportul divizorului,
-%
+
 \begin{equation*}
 V_\text{ies} = V_\text{in} \cdot \frac{R_2}{R_1 + R_2}
 = V_\text{in} \cdot \frac{300}{100 + 300} = 0{,}75 \cdot V_\text{in},
 \end{equation*}
-%
+
 astfel încât tensiunea maximă de 2,9~V devine aproximativ 2,18~V, încadrându-se
 confortabil sub referința convertorului. Montajul efectiv al acestor divizoare,
 împreună cu placa convertorului, este prezentat în Figura~\ref{fig:divizoare}.
@@ -571,13 +571,13 @@ end function;
 În etapa de predicție, poziția este avansată cu termenul corespunzător vitezei, iar
 matricea de covarianță este propagată conform ecuațiilor deduse în capitolul de
 analiză. Predicția covarianței,
-%
+
 \begin{align*}
 P_{00}^{-} &= P_{00} + 2\,\Delta t\,P_{01} + \Delta t^2\,P_{11} + Q_{00}, \\
 P_{01}^{-} &= P_{01} + \Delta t\,P_{11}, \\
 P_{11}^{-} &= P_{11} + Q_{11},
 \end{align*}
-%
+
 nu poate fi calculată dintr-o singură expresie, deoarece ar conține mai multe
 înmulțiri înlănțuite, ceea ce ar crea o cale combinațională prea lungă. De aceea, ea
 este descompusă pe mai multe stări, fiecare efectuând cel mult o înmulțire. Mai întâi
@@ -605,11 +605,11 @@ poziția măsurată și cea prezisă, $y = z - \hat{x}_0^{-}$, și covarianța i
 $S = P_{00}^{-} + R$. Câștigul Kalman se obține apoi prin cele două împărțiri
 $K_0 = P_{00}^{-}/S$ și $K_1 = P_{01}^{-}/S$, realizate cu modulul de împărțire
 descris în continuare. Starea este în final corectată proporțional cu inovația,
-%
+
 \begin{equation*}
 \hat{x}_0 = \hat{x}_0^{-} + K_0\,y, \qquad \hat{x}_1 = \hat{x}_1^{-} + K_1\,y,
 \end{equation*}
-%
+
 fiecare dintre aceste corecții fiind descompusă, la rândul ei, într-un pas de
 înmulțire și unul de adunare, pentru a respecta disciplina unei singure înmulțiri pe
 ciclu de ceas.
@@ -671,11 +671,11 @@ pentru astfel de servomotoare, de la 0,544~ms pentru 0 grade până la 2,4~ms pe
 180 de grade. La frecvența de 100~MHz, impulsul minim corespunde la 54400 de perioade
 de ceas, iar fiecare grad adaugă încă $185600/180 \approx 1031$ de perioade, astfel
 încât pragul se calculează ca
-%
+
 \begin{equation*}
 \text{prag}(\alpha) = 54400 + \alpha \times 1031,
 \end{equation*}
-%
+
 relație transpusă direct în cod prin expresia de mai jos.
 
 \needspace{16\baselineskip}

@@ -240,14 +240,14 @@ fiindcă ea determină comanda trimisă servomotorului, în timp ce viteza este 
 mărime auxiliară, care permite filtrului să anticipeze evoluția mișcării între
 două măsurători succesive. Vectorul de stare conține așadar aceste două
 componente,
-%
+
 \begin{equation}
 \label{eq:kalman-stare}
 \mathbf{x} =
 \begin{bmatrix} x_0 \\ x_1 \end{bmatrix} =
 \begin{bmatrix} \text{poziție} \\ \text{viteză} \end{bmatrix} ,
 \end{equation}
-%
+
 unde $x_0$ reprezintă unghiul curent, exprimat în grade, iar $x_1$ reprezintă
 viteza de variație a acestuia, exprimată în grade pe secundă.
 
@@ -268,22 +268,22 @@ simplu, în care se presupune că viteza rămâne aproximativ constantă pe dura
 interval de eșantionare $\Delta t$. Poziția la momentul următor este atunci poziția
 curentă, la care se adaugă distanța parcursă la viteza estimată, iar viteza rămâne
 neschimbată,
-%
+
 \begin{align}
 \label{eq:kalman-evolutie}
 x_0(k+1) &= x_0(k) + \Delta t \cdot x_1(k) , \\
 x_1(k+1) &= x_1(k) .
 \end{align}
-%
+
 Aceste relații se scriu compact cu ajutorul matricei de tranziție $\mathbf{F}$,
 sub forma $\mathbf{x}(k+1) = \mathbf{F}\,\mathbf{x}(k)$, unde
-%
+
 \begin{equation}
 \label{eq:kalman-F}
 \mathbf{F} =
 \begin{bmatrix} 1 & \Delta t \\ 0 & 1 \end{bmatrix} .
 \end{equation}
-%
+
 Intervalul de eșantionare $\Delta t$ coincide cu ciclul de control al sistemului,
 adică 0,02 secunde, fiindcă filtrul este actualizat o singură dată la fiecare ciclu
 de 20~ms. Presupunerea de viteză constantă este o aproximație, însă pe un interval
@@ -296,13 +296,13 @@ Mărimea pe care sistemul o măsoară efectiv este doar poziția unghiulară, nu
 viteza. Relația dintre starea sistemului și măsurătoare se exprimă prin matricea de
 observare $\mathbf{H}$, care selectează din vectorul de stare doar componenta de
 poziție,
-%
+
 \begin{equation}
 \label{eq:kalman-H}
 z(k) = \mathbf{H}\,\mathbf{x}(k) + v(k) , \qquad
 \mathbf{H} = \begin{bmatrix} 1 & 0 \end{bmatrix} ,
 \end{equation}
-%
+
 unde $z(k)$ este poziția măsurată, iar $v(k)$ este zgomotul de măsurare. Faptul că
 viteza nu este direct observabilă nu împiedică filtrul să o estimeze, fiindcă ea
 este dedusă indirect din modul în care poziția măsurată evoluează în timp.
@@ -316,13 +316,13 @@ viteză constantă. A doua este zgomotul de măsurare $R$, care exprimă cât de
 sunt afectate de zgomot valorile primite. Matricea $\mathbf{Q}$ este aleasă
 diagonală, presupunând că perturbațiile de poziție și de viteză sunt
 independente,
-%
+
 \begin{equation}
 \label{eq:kalman-Q}
 \mathbf{Q} =
 \begin{bmatrix} Q_{00} & 0 \\ 0 & Q_{11} \end{bmatrix} .
 \end{equation}
-%
+
 Raportul dintre aceste mărimi determină echilibrul filtrului. Atunci când zgomotul
 de măsurare $R$ este mare în raport cu zgomotul de proces, filtrul acordă mai multă
 încredere predicției proprii și produce un răspuns neted, dar mai lent. În situația
@@ -338,43 +338,43 @@ predicție, starea și incertitudinea asociată sunt proiectate înainte în tim
 baza modelului de evoluție. Poziția este avansată cu termenul corespunzător
 vitezei, iar matricea de covarianță $\mathbf{P}$, care descrie incertitudinea
 estimării, crește conform relației
-%
+
 \begin{equation}
 \label{eq:kalman-predict}
 \mathbf{x}^{-} = \mathbf{F}\,\mathbf{x} , \qquad
 \mathbf{P}^{-} = \mathbf{F}\,\mathbf{P}\,\mathbf{F}^{\top} + \mathbf{Q} .
 \end{equation}
-%
+
 Creșterea incertitudinii în această etapă reflectă faptul că o predicție bazată pe
 un model imperfect devine, cu fiecare pas, mai puțin sigură.
 
 În etapa de actualizare, filtrul corectează predicția folosind măsurătoarea sosită.
 Se calculează mai întâi diferența dintre valoarea măsurată și cea prezisă, numită
 inovație, precum și incertitudinea totală asociată acesteia,
-%
+
 \begin{equation}
 \label{eq:kalman-innov}
 y = z - \mathbf{H}\,\mathbf{x}^{-} , \qquad
 S = \mathbf{H}\,\mathbf{P}^{-}\mathbf{H}^{\top} + R .
 \end{equation}
-%
+
 Pe baza acestor mărimi se determină câștigul Kalman $\mathbf{K}$, care stabilește
 proporția în care inovația corectează estimarea,
-%
+
 \begin{equation}
 \label{eq:kalman-gain}
 \mathbf{K} = \mathbf{P}^{-}\mathbf{H}^{\top} S^{-1} .
 \end{equation}
-%
+
 În final, starea și covarianța sunt corectate cu ajutorul câștigului astfel
 obținut,
-%
+
 \begin{equation}
 \label{eq:kalman-update}
 \mathbf{x} = \mathbf{x}^{-} + \mathbf{K}\,y , \qquad
 \mathbf{P} = (\mathbf{I} - \mathbf{K}\,\mathbf{H})\,\mathbf{P}^{-} .
 \end{equation}
-%
+
 Un aspect remarcabil al acestui mecanism este faptul că viteza, deși nu este
 măsurată direct, ajunge totuși să fie corectată. Acest lucru se întâmplă prin
 intermediul corelației dintre poziție și viteză, reținută în matricea de
@@ -486,12 +486,12 @@ cele trei cazuri reprezentative pentru pozițiile de 0, 90 și 180 de grade.
 
 Relația dintre unghiul dorit $\alpha$, exprimat în grade, și durata impulsului
 $\tau$, exprimată în milisecunde, este liniară și se scrie sub forma
-%
+
 \begin{equation}
 \label{eq:pwm-pulse}
 \tau(\alpha) = 1{,}0 + \frac{\alpha}{180} ,
 \end{equation}
-%
+
 ceea ce înseamnă că la unghiul de 0 grade durata este de 1~ms, iar la 180 de grade
 durata ajunge la 2~ms. Această durată trebuie tradusă într-un număr de perioade de
 ceas, fiindcă generatorul PWM din interiorul plăcii numără impulsuri de ceas pentru

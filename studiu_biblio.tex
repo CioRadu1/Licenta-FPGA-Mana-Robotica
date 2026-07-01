@@ -277,17 +277,17 @@ funcționează ciclic, alternând două etape. În etapa de predicție, starea �
 incertitudinea sunt proiectate înainte în timp pe baza modelului sistemului,
 descris de matricea de tranziție $\mathbf{F}$ și de zgomotul de proces
 $\mathbf{Q}$ \cite{welch1995}:
-%
+
 \begin{align}
 	\hat{\mathbf{x}}_{k}^{-} &= \mathbf{F}\,\hat{\mathbf{x}}_{k-1} \\
 	\mathbf{P}_{k}^{-} &= \mathbf{F}\,\mathbf{P}_{k-1}\,\mathbf{F}^{\top} + \mathbf{Q}
 \end{align}
-%
+
 În etapa de actualizare, predicția este corectată cu ajutorul măsurătorii
 $\mathbf{z}_k$. Se calculează mai întâi câștigul Kalman $\mathbf{K}_k$, care
 stabilește cât de mult se ține cont de măsurătoare față de predicție, după care
 starea și covarianța sunt corectate \cite{welch1995}:
-%
+
 \begin{align}
 	\mathbf{K}_k &= \mathbf{P}_{k}^{-}\mathbf{H}^{\top}
 	\left(\mathbf{H}\,\mathbf{P}_{k}^{-}\mathbf{H}^{\top} + \mathbf{R}\right)^{-1} \\
@@ -295,7 +295,7 @@ starea și covarianța sunt corectate \cite{welch1995}:
 	+ \mathbf{K}_k\left(\mathbf{z}_k - \mathbf{H}\,\hat{\mathbf{x}}_{k}^{-}\right) \\
 	\mathbf{P}_{k} &= \left(\mathbf{I} - \mathbf{K}_k\,\mathbf{H}\right)\mathbf{P}_{k}^{-}
 \end{align}
-%
+
 Aici $\mathbf{H}$ este matricea de observație, care leagă starea de mărimea
 măsurată, $\mathbf{R}$ reprezintă zgomotul de măsurare, iar $\mathbf{I}$ este
 matricea identitate. Diferența $\mathbf{z}_k - \mathbf{H}\,\hat{\mathbf{x}}_{k}^{-}$,
