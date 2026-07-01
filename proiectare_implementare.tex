@@ -430,14 +430,14 @@ datelor între ele sunt prezentate în Figura~\ref{fig:arhitectura-module}.
 
 Pe calea principală de comandă, datele intră prin modulul \texttt{uart\_rx}, care
 recuperează octeții de pe linia serială, sunt asamblate în cadre de către
-\texttt{frame\_rx} și depuse în \texttt{mailbox}. De acolo, prin multiplexorul
-\texttt{source\_mux}, ajung la \texttt{kalman\_engine}, care le filtrează, iar
+\texttt{frame\_rx} și depuse în \texttt{mailbox}. De acolo, printr-un bloc de selecție
+a sursei, ajung la \texttt{kalman\_engine}, care le filtrează, iar
 rezultatul este transformat în semnale de comandă de către generatoarele
 \texttt{pwm\_gen}. Pe calea de feedback, modulul \texttt{ad7124\_ctrl} comandă
 convertorul prin \texttt{spi\_master} și recuperează pozițiile măsurate. Un modul
 \texttt{system\_tick\_gen} produce semnalul de sincronizare de 20~ms care ritmează
 întregul sistem, iar modulele \texttt{demo\_rom} și \texttt{frame\_tx} asigură modul
-autonom, respectiv transmiterea valorilor înapoi către calculator.
+demonstrativ, respectiv transmiterea valorilor înapoi către calculator.
 
 \subsection{Generarea semnalului de sincronizare}
 
@@ -661,20 +661,27 @@ Pentru fiecare dintre cele opt canale, un modul \texttt{pwm\_gen} transformă un
 filtrat într-un semnal cu durata impulsului corespunzătoare. Modulul folosește un
 numărător care parcurge ciclic valorile de la 0 la 1.999.999, corespunzând perioadei
 de 20~ms, și menține ieșirea la nivel ridicat atâta timp cât numărătorul este sub un
-prag calculat din unghi. La frecvența de 100~MHz, impulsul minim de 1~ms corespunde la
-100.000 de perioade de ceas, iar fiecare grad adaugă încă $100000/180 \approx 556$ de
-perioade, astfel încât pragul se calculează ca
+prag calculat din unghi.
+
+Deși specificația nominală a servomotoarelor prevede un impuls între 1 și 2~ms,
+testele practice au arătat că servomotoarele MG996R folosite nu parcurg întreaga cursă
+la acest interval, oprindu-se mult înainte de a atinge extremele. Din acest motiv,
+intervalul a fost lărgit la valorile folosite și de bibliotecile de control uzuale
+pentru astfel de servomotoare, de la 0,544~ms pentru 0 grade până la 2,4~ms pentru
+180 de grade. La frecvența de 100~MHz, impulsul minim corespunde la 54400 de perioade
+de ceas, iar fiecare grad adaugă încă $185600/180 \approx 1031$ de perioade, astfel
+încât pragul se calculează ca
 %
 \begin{equation*}
-\text{prag}(\alpha) = 100000 + \alpha \times 556,
+\text{prag}(\alpha) = 54400 + \alpha \times 1031,
 \end{equation*}
 %
 relație transpusă direct în cod prin expresia de mai jos.
 
-\needspace{18\baselineskip}
+\needspace{16\baselineskip}
 \begin{lstlisting}[caption={Calculul pragului de comparație din unghi.},label={lst:pwm-thr}]
-threshold <= to_unsigned(100000, 21) +
-             resize(unsigned(angle) * to_unsigned(556, 10), 21);
+threshold <= to_unsigned(54400, 21) +
+             resize(unsigned(angle) * to_unsigned(1031, 11), 21);
 \end{lstlisting}
 
 Cele opt instanțe funcționează independent și în paralel, astfel încât actualizarea
@@ -714,13 +721,132 @@ pentru comunicație. La fel ca la recepția UART, linia de intrare dinspre conve
 este trecută prin două bistabile înseriate, pentru a preveni metastabilitatea la
 trecerea între domeniile de timp.
 
-\subsection{Modul de funcționare autonomă}
+\subsection{Modurile de funcționare}
 
-Pe lângă funcționarea comandată de la calculator, sistemul dispune de un mod autonom,
-activabil printr-un comutator de pe placă. În acest mod, multiplexorul
-\texttt{source\_mux} selectează ca sursă de unghiuri modulul \texttt{demo\_rom}, în
-locul cutiei poștale. Acesta conține o secvență predefinită de mișcări, parcursă
-pas cu pas la fiecare ciclu de control, prin care mâna execută o demonstrație
-repetitivă, fără a mai fi nevoie de conexiunea cu calculatorul. Modul autonom s-a
-dovedit deosebit de util pentru testarea mecanică a ansamblului și pentru
-demonstrarea funcționării independent de partea de viziune.
+Pe lângă funcționarea comandată de la calculator, sistemul mai dispune de două moduri
+de lucru, selectabile prin comutatoarele de pe placă, ceea ce permite folosirea lui și
+în absența conexiunii cu calculatorul gazdă. Sursa unghiurilor trimise către filtru
+este aleasă în funcție de starea comutatoarelor.
+
+În modul normal, unghiurile provin din cutia poștală, adică de la cadrele primite prin
+UART. Un prim comutator activează modul demonstrativ, în care sursa devine modulul
+\texttt{demo\_rom}, o memorie care conține o secvență predefinită de mișcări, parcursă
+pas cu pas la fiecare ciclu de control. În acest mod, mâna execută o demonstrație
+repetitivă, utilă pentru testarea mecanică a ansamblului și pentru prezentarea
+funcționării independent de partea de viziune.
+
+Un al doilea comutator activează un mod manual, în care fiecare dintre cele opt
+articulații este comandată individual de câte un comutator dedicat. Un comutator ridicat
+trimite articulația corespunzătoare către poziția de 180 de grade, iar unul coborât către
+0 grade. Comanda astfel obținută trece prin aceleași etape de filtrare și de generare a
+semnalelor PWM ca în celelalte moduri, astfel încât mișcarea rămâne lină. Acest mod
+s-a dovedit deosebit de util pentru verificarea individuală a fiecărui servomotor și
+pentru reglarea mecanică a firelor și a tensiunii arcurilor.
+
+\section{Închiderea temporală a circuitului}
+\label{sec:proiectare-timing}
+
+Așa cum s-a arătat în capitolul de analiză, provocarea reală a acestui sistem nu
+este debitul de calcul, ci încadrarea fiecărei operații într-o singură perioadă de
+ceas de 10~ns, astfel încât circuitul să funcționeze stabil la 100~MHz. Această
+secțiune descrie problemele de închidere temporală întâmpinate și soluțiile aplicate
+pentru a le rezolva.
+
+\subsection{Problema inițială}
+
+În primele variante ale implementării, filtrul Kalman conținea expresii aritmetice
+complexe evaluate într-un singur pas, precum calculul complet al unei componente a
+matricei de covarianță sau corecția stării cu un termen proporțional cu inovația.
+Fiecare astfel de expresie înlănțuia mai multe înmulțiri și adunări, formând o cale
+combinațională a cărei întârziere depășea cu mult perioada de 10~ns. La sinteză și
+implementare, unealta raporta un slack negativ, adică circuitul nu putea funcționa la
+frecvența dorită, întârzierea celui mai lung traseu depășind bugetul disponibil între
+două fronturi de ceas.
+
+O a doua sursă de probleme a fost modul inițial de stocare a stării filtrului. Toate
+mărimile celor opt canale fuseseră grupate într-o singură memorie, ceea ce impunea, la
+fiecare acces, un multiplexor foarte larg pentru a selecta canalul dorit. Acest
+multiplexor adăuga o întârziere suplimentară importantă pe calea critică, agravând
+problema de timing.
+
+\subsection{Soluțiile aplicate}
+
+Prima măsură a fost impunerea unei discipline stricte în mașina cu stări a filtrului,
+aceea de a efectua cel mult o singură înmulțire pe ciclu de ceas. Toate expresiile
+compuse au fost descompuse în pași elementari, fiecare cu o cale combinațională
+scurtă, așa cum s-a arătat în secțiunea dedicată filtrului. Această descompunere a
+crescut numărul de stări parcurse, dar a scurtat drastic calea critică, în schimbul
+câtorva cicluri de ceas suplimentare, complet neglijabile față de bugetul de 20~ms.
+
+A doua măsură a vizat operația de împărțire, cea mai costisitoare din algoritm.
+Realizarea ei directă ar fi produs o cale combinațională mult prea lungă, motiv pentru
+care a fost implementată ca un modul secvențial separat, care produce câte un bit de
+rezultat pe ciclu de ceas. În acest fel, întârzierea împărțirii este distribuită pe
+mai multe cicluri, fiecare respectând constrângerea de 10~ns.
+
+A treia măsură a fost separarea stării filtrului în cinci memorii distincte, câte una
+pentru fiecare mărime, în locul unei singure memorii comune. Această separare a
+eliminat multiplexorul larg de pe calea critică și a permis, în plus, ca memoriile să
+fie realizate ca memorie distribuită în celulele logice, fără a ocupa blocuri de
+memorie dedicate.
+
+\subsection{Rezultatele obținute}
+
+După aplicarea acestor soluții, circuitul respectă toate constrângerile temporale la
+frecvența de 100~MHz. Închiderea temporală s-a obținut totuși la limită, ceea ce arată
+că soluțiile au fost necesare. În fazele intermediare ale implementării, după plasare
+și rutare, unealta raporta încă un slack negativ, de ordinul a $-1{,}8$~ns, iar abia
+etapa finală de optimizare fizică a reușit să aducă slack-ul la o valoare pozitivă.
+Valorile finale ale analizei temporale sunt prezentate în Tabelul~\ref{tab:timing}.
+
+\begin{table}[H]
+\centering
+\caption{Rezultatele finale ale analizei temporale la 100~MHz.}
+\label{tab:timing}
+\begin{tabular}{l r}
+\toprule
+\textbf{Parametru} & \textbf{Valoare} \\
+\midrule
+Perioada de ceas impusă & 10,000 ns \\
+Worst Negative Slack (WNS) & 0,002 ns \\
+Total Negative Slack (TNS) & 0,000 ns \\
+Worst Hold Slack (WHS) & 0,038 ns \\
+Puncte terminale în eșec & 0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Un slack pozitiv, chiar și foarte mic, înseamnă că circuitul funcționează corect la
+frecvența cerută, iar toate cele peste cinci mii de puncte terminale ale proiectului
+respectă constrângerile, fără nicio cale în eșec.
+
+\subsection{Utilizarea resurselor}
+
+Dincolo de închiderea temporală, implementarea se remarcă printr-un consum foarte
+redus de resurse în raport cu cele disponibile pe circuitul Artix-7 XC7A35T. Valorile
+raportate de unealtă sunt sintetizate în Tabelul~\ref{tab:utilizare}.
+
+\begin{table}[H]
+\centering
+\caption{Utilizarea resurselor pe circuitul Artix-7 XC7A35T.}
+\label{tab:utilizare}
+\begin{tabular}{l r r r}
+\toprule
+\textbf{Resursă} & \textbf{Utilizat} & \textbf{Disponibil} & \textbf{Procent} \\
+\midrule
+Tabele de căutare (LUT) & 3226 & 20800 & 15,5\% \\
+Bistabile (FF) & 1730 & 41600 & 4,2\% \\
+Blocuri de memorie (BRAM) & 0 & 50 & 0\% \\
+Blocuri aritmetice (DSP) & 28 & 90 & 31,1\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Se remarcă în mod deosebit faptul că proiectul nu folosește niciun bloc de memorie
+dedicat, cele cinci memorii ale filtrului fiind realizate integral ca memorie
+distribuită în celulele logice, urmare directă a separării descrise mai sus. Consumul
+cel mai ridicat, de aproximativ o treime, apare la blocurile aritmetice dedicate,
+folosite pentru înmulțirile din filtrul Kalman și din generarea semnalelor PWM.
+Marja largă rămasă la toate categoriile de resurse confirmă că platforma aleasă are
+capacitatea necesară nu doar pentru sistemul actual, ci și pentru eventuale extinderi
+viitoare.
