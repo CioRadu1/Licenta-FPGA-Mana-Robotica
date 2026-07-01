@@ -1,299 +1,152 @@
-\chapter{Manual de instalare și utilizare}\label{ch:instalare}
+\chapter{Manual de instalare și utilizare}
+\label{ch:instalare}
 \pagestyle{fancy}
 
-Acest capitol oferă instrucțiunile necesare pentru reproducerea, configurarea
-și utilizarea sistemului de control FPGA pentru mâna robotică. Se prezintă
-cerințele hardware și software, procedura de instalare a mediului de
-dezvoltare, programarea plăcii FPGA, conectarea componentelor hardware și
-modurile de operare ale sistemului.
+Acest capitol descrie modul în care sistemul trebuie asamblat, conectat și pus în
+funcțiune, precum și modurile în care poate fi utilizat. Sunt prezentate pe rând
+componentele necesare, alimentarea, conectarea plăcilor între ele și, în final,
+comenzile prin care utilizatorul controlează mâna robotică.
 
-%==========================================================================
-\section{Cerințe hardware}
-\label{sec:cerinte-hw}
+\section{Componente și resurse necesare}
+\label{sec:manual-componente}
 
-Componentele hardware necesare pentru construirea și operarea sistemului sunt
-enumerate în Tabelul~\ref{tab:hw-requirements}.
+Pentru punerea în funcțiune a sistemului sunt necesare placa FPGA Basys3, mâna robotică
+asamblată împreună cu cele opt servomotoare, cele două izolatoare ADuM1400 pentru
+semnalele de comandă, izolatorul SPI MAX14850, convertorul analog-digital AD7124-8,
+regulatorul liniar ADP165 și modulul de alimentare DC2468A. Pe lângă acestea, este
+nevoie de o sursă de alimentare externă și, opțional, de un calculator gazdă pentru
+modul de urmărire în timp real.
+
+\section{Alimentarea sistemului}
+\label{sec:manual-alimentare}
+
+Alimentarea întregului sistem pornește de la o sursă externă conectată la modulul
+DC2468A. Aceasta trebuie să furnizeze o tensiune de 12~V și un curent de cel puțin 8~A,
+deoarece cele opt servomotoare, atunci când acționează simultan sub sarcină, pot cere
+un curent considerabil. În locul unei surse de laborator, se poate folosi și un
+încărcător suficient de puternic, adaptat corespunzător pentru a furniza tensiunea și
+curentul necesare.
+
+Modulul DC2468A coboară tensiunea de la 12~V la 5~V, tensiune folosită pentru
+alimentarea servomotoarelor. Tot din DC2468A este alimentat și regulatorul liniar
+ADP165, care coboară mai departe tensiunea la 3,3~V pentru convertorul analog-digital.
+De asemenea, latura izolată a izolatoarelor, cea dinspre servomotoare și convertor,
+este alimentată tot din DC2468A, astfel încât întreaga parte de putere folosește aceeași
+sursă.
+
+Partea logică, în schimb, este alimentată separat, direct de la placa Basys3. Aceasta
+furnizează tensiunea de 3,3~V pentru latura dinspre placă a izolatoarelor, adică pentru
+partea care primește semnalele digitale de la FPGA. În felul acesta, cele două domenii
+de alimentare, cel logic dinspre placă și cel de putere dinspre sursă, rămân complet
+separate galvanic, alimentarea provenind din surse diferite pe cele două laturi ale
+izolatoarelor.
+
+\section{Conectarea plăcilor}
+\label{sec:manual-conectare}
+
+Placa Basys3 trimite cele opt semnale PWM prin conectoarele sale Pmod. Primele patru
+canale, corespunzătoare primelor patru unghiuri din cadru, sunt scoase prin conectorul
+JA, iar următoarele patru, corespunzătoare celorlalte unghiuri din cadru, prin
+conectorul JB. Fiecare dintre aceste semnale intră într-unul dintre cele două
+izolatoare ADuM1400, care realizează atât izolarea galvanică, cât și ridicarea nivelului
+logic de la 3,3~V la 5~V. Corespondența dintre canale, pinii fizici ai plăcii și
+articulațiile comandate este dată în Tabelul~\ref{tab:pini-pwm}.
 
 \begin{table}[H]
 \centering
-\caption{Lista componentelor hardware necesare}
-\label{tab:hw-requirements}
-\begin{tabular}{@{}lp{7cm}l@{}}
+\caption{Corespondența pinilor PWM de pe placa Basys3.}
+\label{tab:pini-pwm}
+\begin{tabular}{c l l l}
 \toprule
-\textbf{Componentă} & \textbf{Descriere} & \textbf{Cantitate} \\
+\textbf{Canal} & \textbf{Pmod} & \textbf{Pin FPGA} & \textbf{Articulație} \\
 \midrule
-Basys3 & Placă FPGA Xilinx Artix-7 XC7A35T, 100\,MHz & 1 \\
-Cablu USB & Micro-USB pentru programare și UART & 1 \\
-MG996R & Servomotor cu cuplu mare, feedback analogic & 8 \\
-ADUM1400 & Izolator galvanic digital, 4 canale & 2 \\
-DC2468A & Convertor step-down 12\,V $\rightarrow$ 5\,V, 8\,A & 1 \\
-ADP165 & Regulator LDO 5\,V $\rightarrow$ 3,3\,V, zgomot scăzut & 1 \\
-AD7124-8 & ADC sigma-delta pe 24~biți, 8 canale & 1 \\
-MAX14850 & Izolator SPI digital, 4 canale & 1 \\
-Alimentator & 12\,V DC, minim 8\,A & 1 \\
-Fire de conexiune & Dupont, pentru interconectarea modulelor & diverse \\
+1 & JA1 & J1 & Deget mic \\
+2 & JA2 & L2 & Inelar \\
+3 & JA3 & J2 & Mijlociu \\
+4 & JA4 & G2 & Arătător \\
+5 & JB1 & A14 & Police (palmar) \\
+6 & JB2 & A16 & Police (tensiune) \\
+7 & JB3 & B15 & Încheietură \\
+8 & JB4 & B16 & Cot \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\textbf{Observație importantă:} Alimentatorul de 12\,V trebuie să fie capabil
-să furnizeze cel puțin 8\,A, deoarece cele 8~servomotoare MG996R pot consuma
-simultan până la 5,6\,A sub sarcină maximă. Placa Basys3 este alimentată
-separat prin cablu USB și nu trebuie conectată la sursa de 12\,V.
+Se folosesc numai primii patru pini de semnal ai fiecărui conector, restul pinilor
+Pmod rămânând neconectați. Pe lângă pinii de semnal, fiecare conector Pmod pune la
+dispoziție și pini de alimentare de 3,3~V și de masă, folosiți pentru alimentarea
+laturii dinspre placă a izolatoarelor.
 
-%==========================================================================
-\section{Cerințe software}
-\label{sec:cerinte-sw}
+Primul izolator ADuM1400 preia primele patru canale din cadru, iar al doilea preia
+următoarele patru. Pe fiecare izolator, canalele sunt organizate identic pe cele două
+laturi, în ordinea alimentare, masă și cele patru canale de semnal, notate A, B, C și D.
+Astfel, atât intrarea dinspre placă, cât și ieșirea dinspre servomotoare urmează aceeași
+dispunere a pinilor, ceea ce simplifică conectarea. Latura dinspre placă a fiecărui
+izolator este alimentată de la Basys3, iar latura dinspre servomotoare de la sursa de
+putere, prin DC2468A, păstrând astfel separarea galvanică. Pentru ca izolarea să fie
+efectivă, este important ca alimentările și masele celor două laturi să fie conectate
+corect și să nu fie amestecate între ele.
 
-\begin{itemize}
-	\item \textbf{Xilinx Vivado 2025.2} (sau versiune ulterioară) ---
-	      Mediul de dezvoltare pentru sinteză, implementare și programarea
-	      FPGA. Ediția \textit{WebPack} (gratuită) este suficientă, deoarece
-	      circuitul XC7A35T este inclus în licența WebPack.
+Pe calea de feedback, convertorul AD7124-8 comunică cu placa prin izolatorul SPI
+MAX14850. Semnalele SPI sunt scoase de pe placă prin conectorul JC, conform
+Tabelului~\ref{tab:pini-spi}. Regulatorul ADP165 se conectează la pinii de alimentare
+ai izolatorului MAX14850 de pe latura convertorului, pentru a alimenta atât izolatorul,
+cât și convertorul cu tensiunea de 3,3~V.
 
-	\item \textbf{Drivere Digilent} --- Necesare pentru ca Vivado să
-	      recunoască placa Basys3 prin Hardware Manager. Acestea sunt
-	      incluse în instalarea Vivado, dar pot necesita instalare
-	      separată în anumite configurații.
+\begin{table}[H]
+\centering
+\caption{Corespondența pinilor SPI de pe conectorul JC al plăcii Basys3.}
+\label{tab:pini-spi}
+\begin{tabular}{c l l}
+\toprule
+\textbf{Semnal SPI} & \textbf{Pmod} & \textbf{Pin FPGA} \\
+\midrule
+CS (selecție) & JC1 & K17 \\
+MOSI (date către ADC) & JC2 & M18 \\
+MISO (date de la ADC) & JC3 & N17 \\
+SCLK (ceas) & JC4 & P18 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-	\item \textbf{Terminal serial} --- PuTTY, Tera Term sau orice
-	      emulator de terminal serial capabil de 115\,200~baud, 8N1.
-	      Utilizat pentru testarea comunicării UART și transmiterea
-	      cadrelor de comandă.
-\end{itemize}
+Semnalele SPI trec mai întâi prin izolatorul MAX14850, care le transferă peste bariera
+de izolare către convertor, legarea făcându-se după numele semnalelor, deoarece ordinea
+pinilor diferă între cele două plăci. Ansamblul complet al conexiunilor dintre placă,
+izolatoare, convertor și servomotoare este prezentat în Figura~\ref{fig:manual-conexiuni}.
 
-%==========================================================================
-\section{Instalarea mediului de dezvoltare}
-\label{sec:instalare-vivado}
+\begin{figure}[t]
+	\centering
+	\includegraphics[width=\textwidth]{figs/schema_conexiuni.pdf}
+	\caption{Schema conexiunilor dintre placa Basys3, izolatoare, convertor și
+	servomotoare, cu alimentările aferente.}
+	\label{fig:manual-conexiuni}
+\end{figure}
 
-\subsection{Crearea proiectului RTL}
+\section{Moduri de utilizare}
+\label{sec:manual-utilizare}
 
-\begin{enumerate}
-	\item Se lansează Vivado și se selectează \textbf{Create Project}.
-	\item Se alege tipul proiectului: \textbf{RTL Project}.
-	\item La pasul de selecție a dispozitivului, se caută și se selectează:
-	      \textbf{xc7a35tcpg236-1} (Artix-7, pachetul CPG236, speed
-	      grade~$-1$).
-	\item Se adaugă toate cele 13~fișiere sursă VHDL:
-	      \texttt{system\_tick\_gen.vhd}, \texttt{uart\_rx.vhd},
-	      \texttt{uart\_tx.vhd}, \texttt{frame\_rx.vhd},
-	      \texttt{frame\_tx.vhd}, \texttt{mailbox.vhd},
-	      \texttt{source\_mux.vhd}, \texttt{demo\_rom.vhd},
-	      \texttt{spi\_master.vhd}, \texttt{ad7124\_ctrl.vhd},
-	      \texttt{kalman\_engine.vhd}, \texttt{pwm\_gen.vhd},
-	      \texttt{basys3\_top.vhd}.
-	\item Se adaugă fișierul de constrângeri: \texttt{basys3\_servo.xdc}.
-	\item Se setează \texttt{basys3\_top} ca modul de nivel superior
-	      (\textit{top module}) prin clic dreapta $\rightarrow$
-	      \textbf{Set as Top}.
-\end{enumerate}
+După conectarea și alimentarea corectă a sistemului, mâna robotică poate fi controlată
+în trei moduri, selectate prin comutatoarele de pe placa Basys3. Modul activ este
+determinat de starea acestor comutatoare, iar trecerea de la un mod la altul se face
+simplu, prin schimbarea poziției lor.
 
-\subsection{Rezolvarea problemelor comune}
+În mod implicit, când comutatoarele dedicate sunt coborâte, sistemul funcționează în
+modul normal, în care unghiurile sunt primite prin UART de la calculatorul gazdă. Acesta
+este modul folosit pentru urmărirea în timp real a mâinii operatorului.
 
-\subsubsection{Eroare de tip spawn la sinteză}
+Comutatorul SW0 activează modul demonstrativ. În acest mod, mâna execută automat o
+secvență predefinită de mișcări, fără a mai fi nevoie de conexiunea cu calculatorul,
+fiind util pentru demonstrarea funcționării.
 
-În mediul WSL2 sau în configurații cu resurse limitate, Vivado poate genera
-erori de tip \textit{spawn} la lansarea proceselor paralele de sinteză.
-Soluția constă în executarea sintezei și implementării prin consola TCL
-cu un singur fir de execuție:
+Comutatorul SW15 activează modul manual, în care fiecare articulație este comandată
+individual de câte un comutator dedicat. Comutatoarele SW1 până la SW8 corespund celor
+opt servomotoare, în ordinea din cadru, adică degetul mic, inelarul, mijlociul,
+arătătorul, mișcarea palmară a degetului mare, tensiunea degetului mare, încheietura și
+cotul. Un comutator ridicat trimite articulația corespunzătoare către poziția maximă,
+iar unul coborât către poziția minimă, permițând astfel controlul direct al fiecărei
+mișcări. Acest mod este util atât pentru verificarea individuală a servomotoarelor, cât
+și pentru reglajele mecanice.
 
-\begin{lstlisting}[language=tcl,caption={Sinteză și implementare prin consola TCL cu un singur job},label={lst:tcl-workaround}]
-reset_run synth_1
-launch_runs synth_1 -jobs 1
-wait_on_run synth_1
-launch_runs impl_1 -jobs 1
-wait_on_run impl_1
-launch_runs impl_1 -to_step write_bitstream -jobs 1
-wait_on_run impl_1
-\end{lstlisting}
-
-\subsubsection{Eroare hw\_server blocat}
-
-Dacă Hardware Manager nu se poate conecta la placa Basys3, cauza uzuală
-este un proces \texttt{hw\_server} rezidual din o sesiune anterioară.
-Soluția:
-
-\begin{enumerate}
-	\item Se închid toate instanțele Vivado.
-	\item Se opresc procesele \texttt{hw\_server.exe} și
-	      \texttt{cs\_server.exe} din Task Manager (Windows) sau prin
-	      comanda \texttt{kill} (Linux).
-	\item Se relansează Vivado și se reconectează Hardware Manager.
-\end{enumerate}
-
-\subsubsection{Placa Basys3 nedetectată}
-
-Dacă placa nu este detectată la conectarea USB, se verifică instalarea
-driverelor Digilent. Calea implicită a instalatorului este:
-
-\begin{center}
-\texttt{C:\textbackslash Xilinx\textbackslash Vivado\textbackslash 2025.2\textbackslash data\textbackslash xicom\textbackslash cable\_drivers\textbackslash nt64\textbackslash install\_digilent.exe}
-\end{center}
-
-Se execută acest program cu drepturi de administrator.
-
-%==========================================================================
-\section{Programarea plăcii}
-\label{sec:programare}
-
-Procesul de generare și încărcare a bitstreamului se realizează în
-următorii pași:
-
-\begin{enumerate}
-	\item \textbf{Sinteză:} Se selectează \textbf{Run Synthesis} din panoul
-	      \textit{Flow Navigator} (sau tasta F11). Procesul de sinteză
-	      traduce codul VHDL în primitive logice (LUT-uri, flip-flop-uri,
-	      blocuri DSP). Durata tipică: 1--3~minute.
-
-	\item \textbf{Implementare:} Se selectează \textbf{Run Implementation}.
-	      Implementarea plasează primitivele logice pe resursele fizice ale
-	      FPGA-ului și rutează interconexiunile. Se verifică raportul de
-	      timing: toate căile trebuie să respecte constrângerea de 10\,ns
-	      (100\,MHz). Durata tipică: 2--5~minute.
-
-	\item \textbf{Generare bitstream:} Se selectează \textbf{Generate
-	      Bitstream}. Acesta generează fișierul \texttt{.bit} care codifică
-	      întreaga configurare a FPGA-ului.
-
-	\item \textbf{Programare dispozitiv:} Se deschide \textbf{Hardware
-	      Manager} $\rightarrow$ \textbf{Open Target} $\rightarrow$
-	      \textbf{Auto Connect}. Se selectează dispozitivul detectat
-	      (xc7a35t) și se alege \textbf{Program Device}. Se specifică
-	      fișierul \texttt{.bit} generat la pasul anterior.
-\end{enumerate}
-
-\textbf{Notă:} Configurarea FPGA-ului este volatilă --- la deconectarea
-alimentării, bitstreamul se pierde și trebuie reîncărcat. Placa Basys3
-dispune de memorie Flash QSPI pentru stocarea permanentă a bitstreamului,
-dar aceasta necesită pași suplimentari de configurare care depășesc scopul
-acestui manual.
-
-%==========================================================================
-\section{Conectarea hardware}
-\label{sec:conectare-hw}
-
-\subsection{Conectarea servomotoarelor prin izolatori}
-
-\textbf{Conectorul JA (servouri 0--3):}
-\begin{itemize}
-	\item JA0 $\rightarrow$ ADUM1400 \#1 intrare canal 1 $\rightarrow$
-	      ieșire canal 1 $\rightarrow$ servo 0 (pinky) --- fir portocaliu
-	\item JA1 $\rightarrow$ ADUM1400 \#1 canal 2 $\rightarrow$ servo 1 (ring)
-	\item JA2 $\rightarrow$ ADUM1400 \#1 canal 3 $\rightarrow$ servo 2 (middle)
-	\item JA3 $\rightarrow$ ADUM1400 \#1 canal 4 $\rightarrow$ servo 3 (index)
-\end{itemize}
-
-\textbf{Conectorul JB (servouri 4--7):}
-\begin{itemize}
-	\item JB0 $\rightarrow$ ADUM1400 \#2 canal 1 $\rightarrow$ servo 4
-	      (thumb-palm)
-	\item JB1 $\rightarrow$ ADUM1400 \#2 canal 2 $\rightarrow$ servo 5
-	      (thumb-tension)
-	\item JB2 $\rightarrow$ ADUM1400 \#2 canal 3 $\rightarrow$ servo 6
-	      (wrist)
-	\item JB3 $\rightarrow$ ADUM1400 \#2 canal 4 $\rightarrow$ servo 7
-	      (elbow)
-\end{itemize}
-
-Partea primară a fiecărui ADUM1400 se alimentează la 3,3\,V (de la pinii
-VCC ai conectorilor Pmod), iar partea secundară la 5\,V (de la DC2468A).
-
-\textbf{Conectorul JC (SPI la ADC):}
-\begin{itemize}
-	\item JC0 $\rightarrow$ MAX14850 $\rightarrow$ AD7124-8 CS
-	\item JC1 $\rightarrow$ MAX14850 $\rightarrow$ AD7124-8 DIN (MOSI)
-	\item JC2 $\leftarrow$ MAX14850 $\leftarrow$ AD7124-8 DOUT (MISO)
-	\item JC3 $\rightarrow$ MAX14850 $\rightarrow$ AD7124-8 SCLK
-\end{itemize}
-
-\subsection{Alimentarea}
-
-\begin{itemize}
-	\item \textbf{Basys3:} Alimentat prin cablu USB (5\,V), logic la 3,3\,V.
-	\item \textbf{Servomotoare:} Alimentate la 5\,V de la DC2468A, care
-	      primește 12\,V de la alimentatorul extern. Masa (GND) este comună
-	      cu Basys3 prin conectorii Pmod.
-	\item \textbf{ADC și izolator SPI:} Alimentate la 3,3\,V de la ADP165,
-	      care primește 5\,V de la DC2468A. Această alimentare separată
-	      minimizează zgomotul indus de servomotoare asupra măsurătorilor
-	      ADC.
-\end{itemize}
-
-\textbf{Atenție:} Se conectează mai întâi masa (GND) între toate modulele
-înainte de a conecta tensiunile de alimentare, pentru a preveni diferențele
-de potențial pe liniile de date.
-
-%==========================================================================
-\section{Utilizarea sistemului}
-\label{sec:utilizare}
-
-\subsection{Modul demonstrativ}
-
-Modul demonstrativ permite testarea rapidă a sistemului fără a necesita
-conexiunea la un calculator gazdă.
-
-\begin{enumerate}
-	\item Se programează placa Basys3 cu bitstreamul generat.
-	\item Se comută \texttt{sw0} (cel mai din dreapta comutator) în
-	      poziția ON.
-	\item LED-ul 5 se aprinde, confirmând activarea modului demo.
-	\item Servomotoarele execută secvențial cele 21~de cadre-cheie:
-	      deschidere/închidere pumn, fluturare, flexii individuale,
-	      thumbs up, pointing, flexia cotului.
-	\item Secvența se repetă continuu până la dezactivarea sw0.
-\end{enumerate}
-
-\subsection{Modul UART (control de la PC)}
-
-\begin{enumerate}
-	\item Se asigură că \texttt{sw0} este în poziția OFF.
-	\item Se conectează placa Basys3 la PC prin cablu USB (același
-	      cablu care asigură și alimentarea).
-	\item Se deschide un terminal serial cu parametrii:
-	      \begin{itemize}
-	          \item Port: portul COM corespunzător plăcii Basys3
-	          \item Baud rate: 115\,200
-	          \item Format: 8N1 (8 biți date, fără paritate, 1 bit stop)
-	      \end{itemize}
-	\item Se transmit cadre de 10~octeți conform protocolului definit
-	      în Capitolul~\ref{ch:analysis}:
-	      \begin{itemize}
-	          \item Octet 0: 0xFF (scriere unghiuri) sau 0xFE (citire)
-	          \item Octeții 1--8: unghiuri 0--180 pentru cele 8~servouri
-	          \item Octet 9: checksum XOR al octeților 0--8
-	      \end{itemize}
-	\item LED 2 pulsează la fiecare cadru valid recepționat.
-\end{enumerate}
-
-\subsection{Resetarea sistemului}
-
-Apăsarea butonului \textbf{btnC} (butonul central) de pe placa Basys3
-efectuează un reset sincron al întregului sistem. Acest lucru:
-
-\begin{itemize}
-	\item Resetează filtrul Kalman (revenire la starea inițială cu
-	      incertitudine mare)
-	\item Resetează ADC-ul (reinițializare completă a registrelor)
-	\item Resetează modulul UART (gata pentru recepție)
-	\item Resetează modulul demo (pornire de la cadrul-cheie 0)
-	\item Setează toate ieșirile PWM la 0° (puls de 1\,ms)
-\end{itemize}
-
-LED-ul 0 se stinge momentan în timpul reinițializării ADC-ului
-(aproximativ 5\,ms), apoi se reaprinde când configurarea este finalizată.
-
-\subsection{Interpretarea indicatoarelor LED}
-
-\begin{itemize}
-	\item \textbf{LED 0 aprins permanent:} ADC inițializat corect ---
-	      funcționare normală.
-	\item \textbf{LED 0 stins:} ADC nu s-a inițializat --- verificați
-	      conexiunea SPI și alimentarea.
-	\item \textbf{LED 2 pulsează:} Cadre UART recepționate cu succes.
-	\item \textbf{LED 3 pulsează:} Erori de checksum --- verificați
-	      integritatea cablului USB sau corectitudinea calculului de
-	      checksum.
-	\item \textbf{LED 5 aprins:} Mod demo activ (sw0 = ON).
-	\item \textbf{LED-urile 8--15:} Afișează în binar unghiul filtrat
-	      al servo 0 (ex: 01011010 = 90°).
-\end{itemize}
+Butonul central al plăcii are rolul de resetare a sistemului, readucându-l în starea
+inițială. Indiferent de modul ales, comenzile trec prin filtrul Kalman și prin
+generatoarele PWM, astfel încât mișcarea rămâne lină în toate situațiile.
