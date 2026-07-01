@@ -29,10 +29,9 @@ hardware convențional. Acest lucru deschide posibilitatea construirii unor
 sisteme de teleoperare accesibile, în care un operator uman controlează o mână
 robotică prin simpla filmare a propriei mâini cu o cameră web.
 
-Provocarea principală constă în integrarea celor două domenii: pe de o parte,
-procesarea video și extragerea coordonatelor articulațiilor (realizată pe un
-calculator gazdă) și, pe de altă parte, controlul determinist al servomotoarelor
-(realizat pe o platformă hardware dedicată). Această lucrare abordează tocmai
+Provocarea principală constă în integrarea celor două domenii, adică procesarea video
+și extragerea coordonatelor articulațiilor, realizată pe un calculator gazdă, împreună cu
+controlul determinist al servomotoarelor, realizat pe o platformă hardware dedicată. Această lucrare abordează tocmai
 această integrare, propunând o soluție bazată pe FPGA (\textit{Field-Programmable
 Gate Array}, matrice de porți programabile) pentru componenta de control.
 
@@ -45,7 +44,7 @@ caracter aplicativ. Mi-am dorit să realizez ceva util
 și, în același timp, spectaculos, iar domeniul teleoperării m-a fascinat
 dintotdeauna prin ideea de a controla de la distanță un sistem mecanic care
 reproduce gesturile umane. Din această dorință s-a născut tema lucrării de
-față: un braț robotic care imită în timp real mișcările mâinii umane,
+față, un braț robotic care imită în timp real mișcările mâinii umane,
 preluate cu ajutorul unei camere web. Componenta de viziune computerizată
 este dezvoltată de colegul meu Lion Moroz, în timp ce contribuția mea
 acoperă preluarea datelor prin UART (\textit{Universal Asynchronous
@@ -129,8 +128,8 @@ Lanțul complet de semnal este:
 \mbox{\textit{Cameră} $\rightarrow$ \textit{MediaPipe} $\rightarrow$ \textit{UART} $\rightarrow$ \textit{FPGA} $\rightarrow$ \textit{ADUM1400} $\rightarrow$ \textit{Servo}}
 \end{center}
 
-Cele 8~servomotoare sunt mapate pe articulațiile mâinii robotice după cum
-urmează: degetul mic, degetul inelar, degetul mijlociu, degetul arătător,
+Cele 8~servomotoare sunt mapate pe articulațiile mâinii robotice în ordinea
+următoare, și anume degetul mic, degetul inelar, degetul mijlociu, degetul arătător,
 mișcarea palmară a degetului mare, tensiunea degetului mare, rotația
 încheieturii și extensia cotului. Această configurație permite reproducerea
 majorității gesturilor naturale ale mâinii.
