@@ -17,6 +17,37 @@ regulatorul liniar ADP165 și modulul de alimentare DC2468A. Pe lângă acestea,
 nevoie de o sursă de alimentare externă și, opțional, de un calculator gazdă pentru
 modul de urmărire în timp real.
 
+\section{Pregătirea și încărcarea codului pe placă}
+\label{sec:manual-vivado}
+
+Înainte de orice conectare fizică, placa FPGA trebuie programată cu circuitul descris în
+VHDL, deoarece o placă Basys3 nefiind programată nu are niciun comportament. Codul sursă
+al proiectului, împreună cu fișierul de constrângeri, este disponibil în depozitul public
+al lucrării \cite{repo_licenta}. Pentru a transforma acest cod într-o configurație care
+poate rula pe placă este nevoie de mediul Xilinx Vivado, în care se parcurg câțiva pași
+standard.
+
+Mai întâi se creează un proiect nou în Vivado, având ca țintă circuitul Artix-7
+XC7A35T corespunzător plăcii Basys3. În proiect se adaugă toate fișierele sursă VHDL ale
+sistemului, precum și fișierul de constrângeri, care stabilește corespondența dintre
+semnalele din cod și pinii fizici ai plăcii, împreună cu frecvența ceasului de 100~MHz.
+Modulul de nivel superior al proiectului trebuie să fie cel principal, care instanțiază
+toate celelalte module.
+
+După adăugarea fișierelor, se parcurg în ordine cele trei etape ale fluxului de
+proiectare. Prima este sinteza, prin care descrierea VHDL este transformată într-o rețea
+de porți logice. A doua este implementarea, care plasează și rutează această rețea pe
+resursele concrete ale circuitului, respectând constrângerile temporale. La finalul
+acestei etape se poate verifica raportul de analiză temporală, care trebuie să confirme
+că toate constrângerile sunt îndeplinite. A treia etapă constă în generarea fișierului de
+configurare, cunoscut sub numele de bitstream, care conține configurația completă a
+circuitului.
+
+În final, cu placa conectată la calculator prin cablul USB, fișierul de configurare este
+încărcat pe placă din managerul de hardware al mediului Vivado. Odată programată, placa
+execută circuitul și rămâne funcțională atât timp cât este alimentată. Abia după această
+etapă are sens conectarea componentelor externe descrise în continuare.
+
 \section{Alimentarea sistemului}
 \label{sec:manual-alimentare}
 
