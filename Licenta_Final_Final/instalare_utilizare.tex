@@ -1,0 +1,182 @@
+\chapter{Manual de instalare și utilizare}
+\label{ch:instalare}
+\pagestyle{fancy}
+
+Acest capitol descrie modul în care sistemul trebuie asamblat, conectat și pus în
+funcțiune, precum și modurile în care poate fi utilizat. Sunt prezentate pe rând
+componentele necesare, alimentarea, conectarea plăcilor între ele și, în final,
+comenzile prin care utilizatorul controlează mâna robotică.
+
+\section{Componente și resurse necesare}
+\label{sec:manual-componente}
+
+Pentru punerea în funcțiune a sistemului sunt necesare placa FPGA Basys3, mâna robotică
+asamblată împreună cu cele opt servomotoare, cele două izolatoare ADuM1400 pentru
+semnalele de comandă, izolatorul SPI MAX14850, convertorul analog-digital AD7124-8,
+regulatorul liniar ADP165 și modulul de alimentare DC2468A. Pe lângă acestea, este
+nevoie de o sursă de alimentare externă și, opțional, de un calculator gazdă pentru
+modul de urmărire în timp real.
+
+\section{Pregătirea și încărcarea codului pe placă}
+\label{sec:manual-vivado}
+
+Înainte de orice conectare fizică, placa FPGA trebuie programată cu circuitul descris în
+VHDL, deoarece o placă Basys3 nefiind programată nu are niciun comportament. Codul sursă
+al aplicației, împreună cu fișierul de constrângeri, este cel predat odată cu lucrarea.
+Pentru a transforma acest cod într-o configurație care poate rula pe placă este nevoie de
+mediul Xilinx Vivado, în care se parcurg câțiva pași standard.
+
+Mai întâi se creează un proiect nou în Vivado, având ca țintă circuitul Artix-7
+XC7A35T corespunzător plăcii Basys3. În proiect se adaugă toate fișierele sursă VHDL ale
+sistemului, precum și fișierul de constrângeri, care stabilește corespondența dintre
+semnalele din cod și pinii fizici ai plăcii, împreună cu frecvența ceasului de 100~MHz.
+Modulul de nivel superior al proiectului trebuie să fie cel principal, care instanțiază
+toate celelalte module.
+
+După adăugarea fișierelor, se parcurg în ordine cele trei etape ale fluxului de
+proiectare. Prima este sinteza, prin care descrierea VHDL este transformată într-o rețea
+de porți logice. A doua este implementarea, care plasează și rutează această rețea pe
+resursele concrete ale circuitului, respectând constrângerile temporale. La finalul
+acestei etape se poate verifica raportul de analiză temporală, care trebuie să confirme
+că toate constrângerile sunt îndeplinite. A treia etapă constă în generarea fișierului de
+configurare, cunoscut sub numele de bitstream, care conține configurația completă a
+circuitului.
+
+În final, cu placa conectată la calculator prin cablul USB, fișierul de configurare este
+încărcat pe placă din managerul de hardware al mediului Vivado. Odată programată, placa
+execută circuitul și rămâne funcțională atât timp cât este alimentată. Abia după această
+etapă are sens conectarea componentelor externe descrise în continuare.
+
+\section{Alimentarea sistemului}
+\label{sec:manual-alimentare}
+
+Alimentarea întregului sistem pornește de la o sursă externă conectată la modulul
+DC2468A. Aceasta trebuie să furnizeze o tensiune de 12~V și un curent de cel puțin 8~A,
+deoarece cele opt servomotoare, atunci când acționează simultan sub sarcină, pot cere
+un curent considerabil. În locul unei surse de laborator, se poate folosi și un
+încărcător suficient de puternic, adaptat corespunzător pentru a furniza tensiunea și
+curentul necesare.
+
+Modulul DC2468A coboară tensiunea de la 12~V la 5~V, tensiune folosită pentru
+alimentarea servomotoarelor. Tot din DC2468A este alimentat și regulatorul liniar
+ADP165, care coboară mai departe tensiunea la 3,3~V pentru convertorul analog-digital.
+De asemenea, latura izolată a izolatoarelor, cea dinspre servomotoare și convertor,
+este alimentată tot din DC2468A, astfel încât întreaga parte de putere folosește aceeași
+sursă.
+
+Partea logică, în schimb, este alimentată separat, direct de la placa Basys3. Aceasta
+furnizează tensiunea de 3,3~V pentru latura dinspre placă a izolatoarelor, adică pentru
+partea care primește semnalele digitale de la FPGA. În felul acesta, cele două domenii
+de alimentare, cel logic dinspre placă și cel de putere dinspre sursă, rămân complet
+separate galvanic, alimentarea provenind din surse diferite pe cele două laturi ale
+izolatoarelor.
+
+\section{Conectarea plăcilor}
+\label{sec:manual-conectare}
+
+Placa Basys3 trimite cele opt semnale PWM prin conectoarele sale Pmod. Primele patru
+canale, corespunzătoare primelor patru unghiuri din cadru, sunt scoase prin conectorul
+JA, iar următoarele patru, corespunzătoare celorlalte unghiuri din cadru, prin
+conectorul JB. Fiecare dintre aceste semnale intră într-unul dintre cele două
+izolatoare ADuM1400, care realizează atât izolarea galvanică, cât și ridicarea nivelului
+logic de la 3,3~V la 5~V. Corespondența dintre canale, pinii fizici ai plăcii și
+articulațiile comandate este dată în Tabelul~\ref{tab:pini-pwm}.
+
+\begin{table}[H]
+\centering
+\caption{Corespondența pinilor PWM de pe placa Basys3.}
+\label{tab:pini-pwm}
+\begin{tabular}{c l l l}
+\toprule
+\textbf{Canal} & \textbf{Pmod} & \textbf{Pin FPGA} & \textbf{Articulație} \\
+\midrule
+1 & JA1 & J1 & Deget mic \\
+2 & JA2 & L2 & Inelar \\
+3 & JA3 & J2 & Mijlociu \\
+4 & JA4 & G2 & Arătător \\
+5 & JB1 & A14 & Degetul mare (palmar) \\
+6 & JB2 & A16 & Degetul mare (tensiune) \\
+7 & JB3 & B15 & Încheietură \\
+8 & JB4 & B16 & Cot \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Se folosesc numai primii patru pini de semnal ai fiecărui conector, restul pinilor
+Pmod rămânând neconectați. Pe lângă pinii de semnal, fiecare conector Pmod pune la
+dispoziție și pini de alimentare de 3,3~V și de masă, folosiți pentru alimentarea
+laturii dinspre placă a izolatoarelor.
+
+Primul izolator ADuM1400 preia primele patru canale din cadru, iar al doilea preia
+următoarele patru. Pe fiecare izolator, canalele sunt organizate identic pe cele două
+laturi, în ordinea alimentare, masă și cele patru canale de semnal, notate A, B, C și D.
+Astfel, atât intrarea dinspre placă, cât și ieșirea dinspre servomotoare urmează aceeași
+dispunere a pinilor, ceea ce simplifică conectarea. Latura dinspre placă a fiecărui
+izolator este alimentată de la Basys3, iar latura dinspre servomotoare de la sursa de
+putere, prin DC2468A, păstrând astfel separarea galvanică. Pentru ca izolarea să fie
+efectivă, este important ca alimentările și masele celor două laturi să fie conectate
+corect și să nu fie amestecate între ele.
+
+Pe calea de feedback, convertorul AD7124-8 comunică cu placa prin izolatorul SPI
+MAX14850. Semnalele SPI sunt scoase de pe placă prin conectorul JC, conform
+Tabelului~\ref{tab:pini-spi}. Regulatorul ADP165 se conectează la pinii de alimentare
+ai izolatorului MAX14850 de pe latura convertorului, pentru a alimenta atât izolatorul,
+cât și convertorul cu tensiunea de 3,3~V.
+
+\begin{table}[H]
+\centering
+\caption{Corespondența pinilor SPI de pe conectorul JC al plăcii Basys3.}
+\label{tab:pini-spi}
+\begin{tabular}{c l l}
+\toprule
+\textbf{Semnal SPI} & \textbf{Pmod} & \textbf{Pin FPGA} \\
+\midrule
+CS (selecție) & JC1 & K17 \\
+MOSI (date către ADC) & JC2 & M18 \\
+MISO (date de la ADC) & JC3 & N17 \\
+SCLK (ceas) & JC4 & P18 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Semnalele SPI trec mai întâi prin izolatorul MAX14850, care le transferă peste bariera
+de izolare către convertor, legarea făcându-se după numele semnalelor, deoarece ordinea
+pinilor diferă între cele două plăci. Ansamblul complet al conexiunilor dintre placă,
+izolatoare, convertor și servomotoare este prezentat în Figura~\ref{fig:manual-conexiuni}.
+
+\begin{figure}[t]
+	\centering
+	\includegraphics[width=\textwidth]{figs/schema_conexiuni.pdf}
+	\caption{Schema conexiunilor dintre placa Basys3, izolatoare, convertor și
+	servomotoare, cu alimentările aferente.}
+	\label{fig:manual-conexiuni}
+\end{figure}
+
+\section{Moduri de utilizare}
+\label{sec:manual-utilizare}
+
+După conectarea și alimentarea corectă a sistemului, mâna robotică poate fi controlată
+în trei moduri, selectate prin comutatoarele de pe placa Basys3. Modul activ este
+determinat de starea acestor comutatoare, iar trecerea de la un mod la altul se face
+simplu, prin schimbarea poziției lor.
+
+În mod implicit, când comutatoarele dedicate sunt coborâte, sistemul funcționează în
+modul normal, în care unghiurile sunt primite prin UART de la calculatorul gazdă. Acesta
+este modul folosit pentru urmărirea în timp real a mâinii operatorului.
+
+Comutatorul SW0 activează modul demonstrativ. În acest mod, mâna execută automat o
+secvență predefinită de mișcări, fără a mai fi nevoie de conexiunea cu calculatorul,
+fiind util pentru demonstrarea funcționării.
+
+Comutatorul SW15 activează modul manual, în care fiecare articulație este comandată
+individual de câte un comutator dedicat. Comutatoarele SW1 până la SW8 corespund celor
+opt servomotoare, în ordinea din cadru, adică degetul mic, inelarul, mijlociul,
+arătătorul, mișcarea palmară a degetului mare, tensiunea degetului mare, încheietura și
+cotul. Un comutator ridicat trimite articulația corespunzătoare către poziția maximă,
+iar unul coborât către poziția minimă, permițând astfel controlul direct al fiecărei
+mișcări. Acest mod este util atât pentru verificarea individuală a servomotoarelor, cât
+și pentru reglajele mecanice.
+
+Butonul central al plăcii are rolul de resetare a sistemului, readucându-l în starea
+inițială. Indiferent de modul ales, comenzile trec prin filtrul Kalman și prin
+generatoarele PWM, astfel încât mișcarea rămâne lină în toate situațiile.

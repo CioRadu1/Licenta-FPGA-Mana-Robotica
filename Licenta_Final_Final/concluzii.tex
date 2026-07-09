@@ -1,0 +1,89 @@
+\chapter{Concluzii}
+\label{ch:concluzii}
+\pagestyle{fancy}
+
+Lucrarea de față a pornit de la dorința de a realiza ceva concret și spectaculos, o
+mână robotică ce reproduce în timp real mișcările mâinii umane, și a parcurs întregul
+drum de la idee până la un sistem funcțional. Pe parcurs, proiectul a îmbinat domenii
+foarte diferite, de la mecanica acționării prin tendoane și fabricarea prin printare 3D,
+până la proiectarea digitală pe FPGA, filtrarea Kalman și electronica de izolare și
+alimentare. Fiecare dintre aceste etape a venit cu propriile provocări, iar rezolvarea
+lor, pas cu pas, a transformat un ansamblu de modele și componente disparate într-un
+sistem unitar care funcționează.
+
+\section{Aportul personal al lucrării}
+\label{sec:concluzii-contributii}
+
+Contribuția centrală a acestei lucrări o reprezintă partea de control implementată pe
+placa FPGA, în care unghiurile primite de la sistemul de viziune sunt filtrate și
+transformate în comenzi pentru servomotoare. În jurul acestei părți a fost dezvoltat un
+filtru Kalman cu două stări, implementat integral în aritmetică cu virgulă fixă Q16.16,
+capabil să prelucreze toate cele opt canale în interiorul unui singur ciclu de control.
+Adaptarea modelului teoretic al filtrului la constrângerile unei platforme fără unitate
+în virgulă mobilă, precum și încadrarea întregii logici în constrângerile temporale ale
+unui circuit de 100~MHz, constituie principalul aport tehnic al lucrării.
+
+Pe lângă filtru, a fost proiectat un întreg lanț de prelucrare, de la recepția și
+validarea cadrelor prin UART, mecanismul de sincronizare de tip cutie poștală și
+generarea celor opt semnale PWM, până la bucla de monitorizare prin convertorul
+analog-digital. Închiderea temporală a circuitului, obținută prin descompunerea
+operațiilor complexe, prin realizarea împărțirii pe mai multe cicluri și prin
+distribuirea stării filtrului în memorii separate, a reprezentat una dintre cele mai
+solicitante etape și, totodată, una dintre cele mai instructive.
+
+O contribuție importantă este și realizarea fizică a mâinii, un ansamblu hibrid care
+combină cele mai potrivite elemente din mai multe proiecte open-source, completate cu
+piese proprii, modelate special pentru a face legătura între componente. Montarea
+sistemului de acționare prin fire și arcuri, precum și realizarea unui sistem de
+feedback prin intervenția directă asupra servomotoarelor, au necesitat un volum
+considerabil de muncă practică. Nu în ultimul rând, integrarea componentelor Analog
+Devices, atât pentru izolarea galvanică, cât și pentru achiziția și alimentarea de
+precizie, a adăugat proiectului o dimensiune concretă de proiectare electronică.
+
+\section{Evaluarea sistemului realizat}
+\label{sec:concluzii-analiza}
+
+Rezultatele obținute confirmă că sistemul își atinge scopul propus. Partea digitală
+funcționează corect și stabil pe placa FPGA, respectând constrângerile temporale, iar
+mâna reproduce mișcările comandate și reușește să prindă și să susțină obiecte reale.
+Un rezultat îmbucurător a fost faptul că integrarea părții mecanice cu cea digitală a
+funcționat de la prima încercare, ceea ce validează abordarea de testare pe niveluri,
+în care fiecare subsistem a fost verificat înainte de a fi adus în ansamblu.
+
+Există, desigur, și limitări. Prinderea este fermă pentru obiectele cu suprafețe care
+oferă aderență, dar mai puțin sigură pentru obiectele netede din plastic lucios, care
+tind să alunece, deoarece degetele nu dispun de un material antiderapant la vârfuri. De
+asemenea, servomotoarele folosite, fiind modele accesibile, prezintă neuniformități care
+au impus calibrări suplimentare, atât la nivelul semnalului PWM, cât și la nivelul
+feedback-ului. Aceste limitări nu afectează funcționarea de ansamblu, dar indică
+direcțiile în care sistemul poate fi îmbunătățit.
+
+\section{Direcții viitoare}
+\label{sec:concluzii-dezvoltare}
+
+O primă direcție de dezvoltare vizează îmbunătățirea prinderii, prin adăugarea unui
+material antiderapant la vârful degetelor, care ar permite manipularea sigură a unei
+game mai largi de obiecte, inclusiv a celor netede. Tot pe partea mecanică, alimentarea
+servomotoarelor la o tensiune mai ridicată, de 6~V, posibilă prin ajustarea modulului de
+alimentare, ar crește cuplul disponibil și forța de strângere. O îmbunătățire și mai
+consistentă ar fi înlocuirea servomotoarelor accesibile actuale cu modele de calitate
+superioară, cu un cuplu mai mare și cu o cursă unghiulară mai amplă, care ar oferi atât
+o forță de prindere sporită, cât și o libertate de mișcare mai apropiată de cea a mâinii
+umane.
+
+O altă direcție firească este eliminarea legăturii prin cablu dintre calculator și placă,
+prin transmiterea datelor pe cale radio. Un modul de comunicație fără fir, conectat în
+locul legăturii seriale actuale, ar permite operarea mâinii de la distanță, sporind
+mobilitatea sistemului și apropiindu-l de scenariile reale de teleoperare.
+
+Pe partea de control, filtrul Kalman ar putea fi extins la un model cu trei stări, care
+să includă și accelerația, oferind o urmărire mai fidelă a mișcărilor rapide. Marja
+foarte largă de resurse rămase pe circuitul FPGA permite cu ușurință o astfel de
+extindere, fără a compromite respectarea constrângerilor de timp.
+
+În final, cea mai firească direcție de continuare o reprezintă integrarea completă cu
+partea de viziune, astfel încât mâna să urmărească în timp real și în mod robust
+gesturile unui operator. Probele preliminare au arătat că lanțul întreg, de la captura
+video până la mișcarea mâinii, poate funcționa unitar, iar rafinarea acestei integrări ar
+transforma prototipul actual într-un sistem de teleoperare pe deplin funcțional,
+apropiindu-l de scopul care a inspirat această lucrare.
