@@ -640,7 +640,7 @@ semnalelor, astfel încât informația trece dintr-o parte în alta fără ca
 perturbațiile de putere să poată ajunge la partea sensibilă.
 
 Pentru izolarea celor opt semnale PWM care comandă servomotoarele se folosesc
-izolatoare digitale de tip ADuM1400. Acestea
+izolatoare digitale de tip ADuM1400~\cite{adum1400_eval}. Acestea
 sunt izolatoare cu patru canale, bazate pe tehnologia iCoupler, în care semnalul
 este transmis peste bariera de izolare prin intermediul unor transformatoare
 miniaturale integrate în cip, nu prin cuplaj optic precum la optocuploarele
@@ -669,7 +669,7 @@ montajului experimental.
 \begin{figure}[H]
 	\centering
 	\includegraphics[width=0.6\textwidth]{figs/adi_adum_eval.jpg}
-	\caption{Placa de evaluare pe care se montează izolatorul ADuM1400, cu
+	\caption{Placa de evaluare pe care se montează izolatorul ADuM1400~\cite{adumqs_eval}, cu
 	conexiunile aduse la borne accesibile pentru integrarea în montaj.}
 	\label{fig:adum-eval}
 \end{figure}
@@ -677,7 +677,7 @@ montajului experimental.
 Bucla de monitorizare prin convertorul analog-digital trebuie la rândul ei izolată,
 fiindcă altfel ar reintroduce o legătură directă între domeniul de putere și placă,
 anulând efectul izolării de pe calea de comandă. Magistrala SPI prin care
-comunică convertorul este izolată cu ajutorul circuitului MAX14850, prezentat în
+comunică convertorul este izolată cu ajutorul circuitului MAX14850~\cite{max14850_eval}, prezentat în
 Figura~\ref{fig:max}. Acesta este un izolator digital cu șase canale, dintre care
 patru unidirecționale și două bidirecționale, ceea ce îl face deosebit de potrivit
 pentru izolarea unei magistrale SPI, care necesită mai multe linii de semnal în
@@ -696,7 +696,7 @@ de putere, păstrând integritatea izolării întregului sistem.
 
 Citirea poziției reale a servomotoarelor necesită un convertor analog-digital
 capabil să măsoare cu precizie tensiuni mici, eventual afectate de zgomot. Pentru
-acest rol a fost ales convertorul AD7124-8, prezentat în Figura~\ref{fig:ad7124}.
+acest rol a fost ales convertorul AD7124-8~\cite{ad7124_eval}, prezentat în Figura~\ref{fig:ad7124}.
 Este un convertor de tip sigma-delta cu o rezoluție de 24 de biți, ceea ce îi
 conferă o gamă dinamică foarte mare și o sensibilitate ridicată. Spre deosebire de
 convertoarele rapide, cu aproximații succesive, un convertor sigma-delta obține
@@ -721,7 +721,7 @@ dimensionată, capabilă să furnizeze atât curentul mare cerut de servomotoare
 și o tensiune curată pentru partea sensibilă de măsurare. Cele opt servomotoare,
 mai ales atunci când acționează simultan sub sarcină, solicită un curent
 considerabil, motiv pentru care alimentarea lor se face printr-un regulator capabil
-de un curent ridicat, realizat cu modulul DC2468A, prezentat în
+de un curent ridicat, realizat cu modulul DC2468A~\cite{dc2468a_eval}, prezentat în
 Figura~\ref{fig:dc2468a}. Acesta coboară tensiunea sursei la valoarea de 5~V cerută
 de servomotoare, furnizând un curent suficient pentru ca toate motoarele să poată
 funcționa simultan fără căderi de tensiune.
@@ -736,7 +736,7 @@ funcționa simultan fără căderi de tensiune.
 
 Convertorul analog-digital, fiind un circuit de precizie, necesită o alimentare cât
 mai curată, lipsită de zgomot. Pentru aceasta se folosește un regulator liniar de
-tip ADP165, prezentat în Figura~\ref{fig:adp165}, care coboară tensiunea de 5~V la
+tip ADP165~\cite{adp165_eval}, prezentat în Figura~\ref{fig:adp165}, care coboară tensiunea de 5~V la
 cea de 3,3~V folosită de convertor. Spre deosebire de regulatoarele în comutație,
 care sunt eficiente dar introduc zgomot, un regulator liniar furnizează o tensiune
 foarte stabilă și curată, esențială pentru a nu compromite precizia măsurătorilor
